@@ -1,0 +1,8 @@
+{
+  "name": "lumiverse-control-room",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/backend.js",
+  "module": "dist/backend.js",
+  "description": "Companion director switchboard and state ledger for the I Love TV! preset"
+}
