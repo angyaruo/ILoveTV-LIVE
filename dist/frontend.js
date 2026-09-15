@@ -1,9 +1,9 @@
 // Control Room: I Love TV! — Master Frontend
 
-export function setup(ctx) {  
+export function setup(ctx) { //
   let currentLedger = {
     affinity: 0,
-    dynamic: '',
+    dynamic: 'Neutral Ground',
     continuity: { seasonArc: '', episodeTarget: '' },
     selectedConnection: '',
     lastActions: []
@@ -11,10 +11,9 @@ export function setup(ctx) {
   let connectionsList = [];
   let activeModal = null;
 
-  // ─── 1. ROBUST COMPOSER INJECTION ──────────────────────────────────────────
+  // ─── 1. COMPOSER INJECTION ────────────────────────────────────────────────
   function insertIntoComposer(text) {
-    // Check all valid Lumiverse textarea selectors
-    const ta = document.querySelector('textarea[name="chat-message"], [data-component="InputArea"] textarea, textarea');
+    const ta = document.querySelector('textarea[name="chat-message"], [data-component="InputArea"] textarea, textarea'); //[cite: 3]
     if (!ta) {
       showToast('⚠️ Could not find chat input box');
       return;
@@ -69,11 +68,11 @@ export function setup(ctx) {
 
   // ─── 2. EVENT DELEGATION FOR CYOA CLICKS ──────────────────────────────────
   document.addEventListener('click', (e) => {
-    const row = e.target.closest('.obs-cyoa-row, .lumi-cyoa-row');  
+    const row = e.target.closest('.obs-cyoa-row, .lumi-cyoa-row'); //
     if (!row) return;
 
     e.preventDefault();
-    const textSpan = row.querySelector('.obs-cyoa-text, .lumi-cyoa-text');  
+    const textSpan = row.querySelector('.obs-cyoa-text, .lumi-cyoa-text'); //[cite: 1]
     if (textSpan) {
       insertIntoComposer(textSpan.textContent.trim());
     }
@@ -81,7 +80,6 @@ export function setup(ctx) {
 
   // ─── 3. LIVE DOM TELEMETRY SCRAPER ─────────────────────────────────────────
   function scrapeLiveTelemetry() {
-    // Scrape Affinity percentage from rendered cards in DOM[cite: 1]
     const affinityHeaders = Array.from(document.querySelectorAll('.lumi-head-strip, .obs-inset-card, div'));
     const matchedAffinity = affinityHeaders.reverse().find(el => el.textContent?.includes('CO-STAR') && el.textContent?.includes('%'));
 
@@ -89,16 +87,15 @@ export function setup(ctx) {
       const match = matchedAffinity.textContent.match(/([+-]?\d+)\s*%/);
       if (match) {
         const val = parseInt(match[1], 10);
-        // Find accompanying quote/subtext
         const subtextEl = matchedAffinity.closest('.lumi-deck-panel, .obs-deck-panel')?.querySelector('div[style*="italic"], .obs-mono-text');
         const dynamic = subtextEl ? subtextEl.textContent.replace(/["“”]/g, '').trim() : '';
 
-        if (!isNaN(val) && val !== currentLedger.affinity) {
+        if (!isNaN(val) && (val !== currentLedger.affinity || dynamic !== currentLedger.dynamic)) {
           ctx.sendToBackend({
             type: 'control_room:sync_telemetry',
             affinity: val,
             dynamic: dynamic
-          });  
+          }); //[cite: 2]
         }
       }
     }
@@ -106,9 +103,9 @@ export function setup(ctx) {
 
   // ─── 4. MODAL DASHBOARD ────────────────────────────────────────────────────
   function openLedgerDashboard() {
-    ctx.sendToBackend({ type: 'control_room:get_state' });  
+    ctx.sendToBackend({ type: 'control_room:get_state' }); //[cite: 2]
 
-    activeModal = ctx.ui.showModal({  
+    activeModal = ctx.ui.showModal({ //[cite: 2]
       title: '📺 CONTROL ROOM // BROADCAST DECK',
       width: 460
     });
@@ -132,28 +129,24 @@ export function setup(ctx) {
       font-size: 13px;
     `;
 
-    // Connections options
     let connOptions = '<option value="">Default Active Connection</option>';
     connectionsList.forEach(c => {
       const sel = c.id === currentLedger.selectedConnection ? 'selected' : '';
       connOptions += `<option value="${c.id}" ${sel}>${c.name}</option>`;
     });
 
-    // Recent actions formatted
-    const actionsList = (currentLedger.lastActions || []).slice(-5).reverse().map(
+    const actionsList = (currentLedger.lastActions || []).slice(-8).reverse().map(
       a => `<div style="padding: 2px 0; border-bottom: 1px dashed rgba(255,255,255,0.06);">${esc(a)}</div>`
     ).join('') || '<div style="color: var(--lumiverse-text-dim, #888);">No recent actions logged.</div>';
 
     container.innerHTML = `
-      <!-- Connection Selector -->
       <div style="display: flex; flex-direction: column; gap: 4px;">
-        <label style="font-weight: 700; font-size: 11px; text-transform: uppercase; color: var(--lumiverse-primary, #8c82ff);">Control Room Profile</label>
+        <label style="font-weight: 700; font-size: 11px; text-transform: uppercase; color: var(--lumiverse-primary, #8c82ff);">Control Room Background Profile</label>
         <select id="cr-conn-select" style="background: var(--lumiverse-fill-subtle, rgba(255,255,255,0.05)); border: 1px solid var(--lumiverse-border, #444); border-radius: 4px; padding: 6px 8px; color: inherit; outline: none;">
           ${connOptions}
         </select>
       </div>
 
-      <!-- Co-Star Affinity -->
       <div style="display: flex; flex-direction: column; gap: 4px;">
         <div style="display: flex; justify-content: space-between; font-weight: 700;">
           <span style="color: var(--lumiverse-primary, #8c82ff);">CO-STAR AFFINITY</span>
@@ -163,23 +156,20 @@ export function setup(ctx) {
           style="accent-color: var(--lumiverse-primary, #8c82ff); cursor: pointer; width: 100%;">
       </div>
 
-      <!-- Dynamic Subtext -->
       <div style="display: flex; flex-direction: column; gap: 4px;">
         <label style="font-weight: 700; font-size: 11px; text-transform: uppercase; color: var(--lumiverse-text-dim, #888);">Dynamic Subtext</label>
         <input type="text" id="cr-dynamic-input" value="${esc(currentLedger.dynamic)}" 
           style="background: var(--lumiverse-fill-subtle, rgba(255,255,255,0.05)); border: 1px solid var(--lumiverse-border, #444); border-radius: 4px; padding: 6px 8px; color: inherit; outline: none;">
       </div>
 
-      <!-- Continuity Reel -->
       <div style="display: flex; flex-direction: column; gap: 4px;">
         <label style="font-weight: 700; font-size: 11px; text-transform: uppercase; color: var(--lumiverse-text-dim, #888);">Season Arc</label>
         <textarea id="cr-arc-input" rows="2" style="background: var(--lumiverse-fill-subtle, rgba(255,255,255,0.05)); border: 1px solid var(--lumiverse-border, #444); border-radius: 4px; padding: 6px 8px; color: inherit; outline: none; resize: vertical;">${esc(currentLedger.continuity?.seasonArc)}</textarea>
       </div>
 
-      <!-- Action & Execution Log -->
       <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 4px;">
         <label style="font-weight: 700; font-size: 11px; text-transform: uppercase; color: var(--lumiverse-primary, #8c82ff);">Last Actions & Telemetry Feed</label>
-        <div style="background: rgba(0,0,0,0.4); border: 1px solid var(--lumiverse-border, rgba(255,255,255,0.1)); border-radius: 4px; padding: 8px 10px; font-family: monospace; font-size: 11px; line-height: 1.4; max-height: 100px; overflow-y: auto;">
+        <div style="background: rgba(0,0,0,0.4); border: 1px solid var(--lumiverse-border, rgba(255,255,255,0.1)); border-radius: 4px; padding: 8px 10px; font-family: monospace; font-size: 11px; line-height: 1.4; max-height: 110px; overflow-y: auto;">
           ${actionsList}
         </div>
       </div>
@@ -214,7 +204,7 @@ export function setup(ctx) {
       };
 
       currentLedger = { ...currentLedger, ...updated };
-      ctx.sendToBackend({ type: 'control_room:save_ledger', ledger: updated });  
+      ctx.sendToBackend({ type: 'control_room:save_ledger', ledger: updated }); //[cite: 2]
       const status = container.querySelector('#cr-status');
       status.textContent = '✦ State & Connection Synced!';
       setTimeout(() => { if (status) status.textContent = ''; }, 2000);
@@ -223,56 +213,65 @@ export function setup(ctx) {
     root.appendChild(container);
   }
 
-  // ─── 5. MOUNT COMPOSER TOOLBAR BUTTON ─────────────────────────────────────
+  // ─── 5. MOUNT TOP-RIGHT FLOATING BADGE ───────────────────────────────────────
   function mountToolbar() {
     if (document.getElementById('cr-toolbar-btn')) return;
 
     const inputArea = document.querySelector('[data-component="InputArea"]');
     if (!inputArea) return;
 
-    // Place inside secondary toolbar row beside the wand icon[cite: 3]
-    const wandOrDoc = inputArea.querySelector('button:has(svg.lucide-wand-2), button:has(svg.lucide-file-text), button[title*="Seasoning"]');  
-    const targetRow = wandOrDoc ? wandOrDoc.parentElement : inputArea;
+    // Ensure the input area container can anchor absolute children
+    inputArea.style.position = 'relative';
 
     const btn = document.createElement('button');
     btn.id = 'cr-toolbar-btn';
     btn.type = 'button';
     btn.title = 'Control Room: I Love TV!';
     btn.innerHTML = `
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="pointer-events: none;">
-        <rect width="20" height="15" x="2" y="7" rx="2" ry="2"></rect>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="pointer-events: none;">
+        <rect width="20" height="15" x="2" y="7" rx="2" rx="2"></rect>
         <polyline points="17 2 12 7 7 2"></polyline>
       </svg>
-    `;
-    btn.style.cssText = `
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      background: transparent;
-      border: 1px solid transparent;
-      border-radius: var(--lcs-radius-xs, 6px);
-      padding: 4px;
-      margin: 0 2px;
-      color: var(--lumiverse-text-dim, #888899);
-      cursor: pointer;
-      height: 28px;
-      width: 28px;
-      box-sizing: border-box;
+      <span style="font-family: monospace; font-size: 11px; font-weight: 700;">ON AIR</span>
     `;
 
+    // Docked cleanly right on top of the composer border
+    btn.style.cssText = `
+      position: absolute;
+      top: -32px;
+      right: 14px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--lumiverse-fill-strong, #16161e);
+      border: 1px solid var(--lumiverse-border, rgba(255,255,255,0.15));
+      border-radius: var(--lcs-radius-xs, 6px);
+      padding: 4px 8px;
+      color: var(--lumiverse-primary, #8c82ff);
+      cursor: pointer;
+      z-index: 50;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      transition: all 0.15s ease;
+    `;
+
+    btn.onmouseenter = () => {
+      btn.style.borderColor = 'var(--lumiverse-primary, #8c82ff)';
+      btn.style.boxShadow = '0 0 10px color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 40%, transparent)';
+    };
+    btn.onmouseleave = () => {
+      btn.style.borderColor = 'var(--lumiverse-border, rgba(255,255,255,0.15))';
+      btn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.4)';
+    };
+
     btn.onclick = (e) => { e.preventDefault(); openLedgerDashboard(); };
-    targetRow.appendChild(btn);
+    inputArea.appendChild(btn);
   }
 
   // ─── 6. BACKEND IPC SYNC ──────────────────────────────────────────────────
-  const unsub = ctx.onBackendMessage((payload) => {  
-    if (payload.type === 'control_room:state_data') {
+  const unsub = ctx.onBackendMessage((payload) => { //[cite: 2]
+    if (payload.type === 'control_room:state_data' || payload.type === 'control_room:save_success') {
       if (payload.ledger) currentLedger = payload.ledger;
       if (payload.connections) connectionsList = payload.connections;
-      if (activeModal) renderModalContent();
-    }
-    if (payload.type === 'control_room:save_success' && payload.ledger) {
-      currentLedger = payload.ledger;
       if (activeModal) renderModalContent();
     }
   });
