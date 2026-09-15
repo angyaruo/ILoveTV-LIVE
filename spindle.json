@@ -4,6 +4,7 @@
   "identifier": "lumiverse_control_room",
   "author": "angyaruo",
   "permissions": [
+    "generation",
     "interceptor",
     "chats",
     "ui_panels",
