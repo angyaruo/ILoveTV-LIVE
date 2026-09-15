@@ -1,6 +1,6 @@
 // Control Room: I Love TV! — Master Frontend
 
-export function setup(ctx) { //[cite: 2]
+export function setup(ctx) { 
   let currentLedger = {
     affinity: 0,
     dynamic: '',
@@ -10,7 +10,7 @@ export function setup(ctx) { //[cite: 2]
 
   // ─── 1. CYOA CLICK-TO-COMPOSER INJECTION ──────────────────────────────────
   function insertIntoComposer(text) {
-    const ta = document.querySelector('[data-component="InputArea"] textarea'); //[cite: 7]
+    const ta = document.querySelector('[data-component="InputArea"] textarea'); 
     if (!ta) return;
 
     const nativeSetter = Object.getOwnPropertyDescriptor(
@@ -31,7 +31,7 @@ export function setup(ctx) { //[cite: 2]
 
   function bindCyoaButtons() {
     const rows = document.querySelectorAll(
-      '.obs-cyoa-row:not([data-cr-bound="true"]), .lumi-cyoa-row:not([data-cr-bound="true"])' //[cite: 1]
+      '.obs-cyoa-row:not([data-cr-bound="true"]), .lumi-cyoa-row:not([data-cr-bound="true"])' 
     );
 
     rows.forEach((row) => {
@@ -40,7 +40,7 @@ export function setup(ctx) { //[cite: 2]
 
       row.addEventListener('click', (e) => {
         e.preventDefault();
-        const textSpan = row.querySelector('.obs-cyoa-text, .lumi-cyoa-text'); //[cite: 1]
+        const textSpan = row.querySelector('.obs-cyoa-text, .lumi-cyoa-text'); 
         if (textSpan) {
           insertIntoComposer(textSpan.textContent.trim());
         }
@@ -50,10 +50,10 @@ export function setup(ctx) { //[cite: 2]
 
   // ─── 2. EDITABLE LEDGER DASHBOARD MODAL ────────────────────────────────────
   function openLedgerDashboard() {
-    // Request fresh state from backend[cite: 2]
+    // Request fresh state from backend
     ctx.sendToBackend({ type: 'control_room:get_ledger' });
 
-    activeModal = ctx.ui.showModal({ //[cite: 2]
+    activeModal = ctx.ui.showModal({ 
       title: '📺 CONTROL ROOM // STATE LEDGER',
       width: 420
     });
@@ -149,39 +149,73 @@ export function setup(ctx) { //[cite: 2]
   function mountToolbar() {
     if (document.getElementById('cr-toolbar-btn')) return;
 
-    const inputArea = document.querySelector('[data-component="InputArea"]'); //[cite: 7]
+    const inputArea = document.querySelector('[data-component="InputArea"]'); //
     if (!inputArea) return;
+
+    // Target the secondary action row (where the wand & doc icons live)
+    let targetRow = null;
+    const wandOrDoc = inputArea.querySelector(
+      'button:has(svg.lucide-wand-2), button:has(svg.lucide-file-text), button[title*="Seasoning"], button[title*="Instruction"]' //
+    );
+
+    if (wandOrDoc && wandOrDoc.parentElement) {
+      targetRow = wandOrDoc.parentElement;
+    } else {
+      // Fallback: look for the secondary toolbar strip above the textarea
+      const rows = Array.from(inputArea.querySelectorAll('div')).filter(
+        (el) => el.querySelector('button') && !el.querySelector('textarea')
+      );
+      targetRow = rows[1] || rows[0] || inputArea;
+    }
 
     const btn = document.createElement('button');
     btn.id = 'cr-toolbar-btn';
-    btn.title = 'Open Control Room Ledger';
-    btn.innerHTML = `📺`;
+    btn.type = 'button';
+    btn.title = 'Control Room: I Love TV!';
+    
+    // Sleek retro CRT monitor SVG matching Lumiverse's Lucide icon stroke weight
+    btn.innerHTML = `
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="pointer-events: none;">
+        <rect width="20" height="15" x="2" y="7" rx="2" ry="2"></rect>
+        <polyline points="17 2 12 7 7 2"></polyline>
+      </svg>
+    `;
+
+    // Native toolbar button styling
     btn.style.cssText = `
-      position: absolute;
-      top: -34px;
-      right: 12px;
-      background: var(--lumiverse-fill-subtle, rgba(20,20,25,0.8));
-      border: 1px solid var(--lumiverse-border, rgba(255,255,255,0.15));
-      border-radius: 6px;
-      padding: 4px 8px;
-      font-size: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: var(--lcs-radius-xs, 6px);
+      padding: 4px;
+      margin: 0 2px;
+      color: var(--lumiverse-text-dim, #888899);
       cursor: pointer;
-      z-index: 10;
       transition: all 0.15s ease;
+      height: 28px;
+      width: 28px;
+      box-sizing: border-box;
     `;
 
     btn.onmouseenter = () => {
-      btn.style.borderColor = 'var(--lumiverse-primary, #8c82ff)';
-      btn.style.boxShadow = '0 0 8px rgba(140,130,255,0.3)';
+      btn.style.color = 'var(--lumiverse-primary, #8c82ff)';
+      btn.style.background = 'color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 15%, transparent)';
+      btn.style.borderColor = 'color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 30%, transparent)';
     };
     btn.onmouseleave = () => {
-      btn.style.borderColor = 'var(--lumiverse-border, rgba(255,255,255,0.15))';
-      btn.style.boxShadow = 'none';
+      btn.style.color = 'var(--lumiverse-text-dim, #888899)';
+      btn.style.background = 'transparent';
+      btn.style.borderColor = 'transparent';
     };
 
-    btn.onclick = openLedgerDashboard;
-    inputArea.style.position = 'relative';
-    inputArea.appendChild(btn);
+    btn.onclick = (e) => {
+      e.preventDefault();
+      openLedgerDashboard();
+    };
+
+    targetRow.appendChild(btn);
   }
 
   // ─── 4. BACKEND IPC SYNC ──────────────────────────────────────────────────
