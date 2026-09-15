@@ -1,15 +1,15 @@
 {
-  "id": "lumiverse-control-room",
-  "name": "Control Room: I Love TV!",
   "version": "1.0.0",
-  "description": "Companion director switchboard for the I Love TV! preset. Deterministic dice rolls, interactive CYOA composer injection, and state telemetry.",
-  "author": "bumyann",
-  "main": "dist/backend.js",
-  "ui": "dist/frontend.js",
+  "name": "Control Room: I Love TV!",
+  "identifier": "lumiverse_control_room",
+  "author": "angyaruo",
   "permissions": [
-    "intercept_prompt",
-    "storage",
-    "chat_read"
+    "interceptor",
+    "chats",
+    "ui_panels",
+    "ephemeral_storage"
   ],
-  "minLumiverseVersion": "1.0.0"
+  "entry_backend": "dist/backend.js",
+  "entry_frontend": "dist/frontend.js",
+  "interceptorTimeoutMs": 5000
 }
