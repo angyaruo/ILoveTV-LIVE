@@ -138,6 +138,7 @@ export function setup(ctx) {
     }
     pendingChoiceRequest = crypto.randomUUID();
     choiceLoading = true;
+    showToast('Writing the selected option as {{user}}…');
     if (choiceTimeoutId) clearTimeout(choiceTimeoutId);
     choiceTimeoutId = setTimeout(() => {
       if (!choiceLoading) return;
@@ -145,7 +146,7 @@ export function setup(ctx) {
       pendingChoiceRequest = null;
       showToast('Choice writer timed out. Try again or switch the background connection.');
       renderWidget();
-    }, 95000);
+    }, 125000);
     renderWidget();
     ctx.sendToBackend({ type: 'control_room:expand_choice', chatId: state.chatId || undefined, requestId: pendingChoiceRequest, option: `[${choice.number}] ${choice.text}` });
   }
