@@ -1,10 +1,9 @@
 // Control Room: I Love TV! — two-pass director engine
 
-const ENGINE_VERSION = '1.3.0';
+const ENGINE_VERSION = '1.4.0';
 const DIRECTOR_TIMEOUT_MS = 50000;
 const CHOICE_TIMEOUT_MS = 90000;
 const MAX_LOG_ENTRIES = 30;
-let lastFrontendUserId;
 
 function defaultLedger() {
   return {
@@ -64,20 +63,40 @@ function safeChatId(chatId) {
   return String(chatId || 'default').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 160) || 'default';
 }
 
-async function getChatLedger(chatId) {
+async function getChatLedger(chatId, userId) {
+  const path = `ledgers/${safeChatId(chatId)}.json`;
+  if (userId && spindle.userStorage) {
+    try {
+      const raw = await spindle.userStorage.read(path, userId);
+      return normalizeLedger(JSON.parse(raw));
+    } catch {
+      // Fall through once so pre-v1.4 ledgers can be migrated from shared storage.
+    }
+  }
   try {
-    const raw = await spindle.storage.read(`ledgers/${safeChatId(chatId)}.json`);
-    return normalizeLedger(JSON.parse(raw));
+    const raw = await spindle.storage.read(path);
+    const ledger = normalizeLedger(JSON.parse(raw));
+    if (userId && spindle.userStorage) {
+      try {
+        await spindle.userStorage.write(path, JSON.stringify(ledger, null, 2), userId);
+      } catch (error) {
+        spindle.log.warn('Control Room: could not migrate ledger to user-scoped storage', error?.message || error);
+      }
+    }
+    return ledger;
   } catch {
     return defaultLedger();
   }
 }
 
-async function saveChatLedger(chatId, ledger) {
+async function saveChatLedger(chatId, ledger, userId) {
   const normalized = normalizeLedger(ledger);
   normalized.lastActions = normalized.lastActions.slice(-MAX_LOG_ENTRIES);
+  const path = `ledgers/${safeChatId(chatId)}.json`;
   try {
-    await spindle.storage.write(`ledgers/${safeChatId(chatId)}.json`, JSON.stringify(normalized, null, 2));
+    const serialized = JSON.stringify(normalized, null, 2);
+    if (userId && spindle.userStorage) await spindle.userStorage.write(path, serialized, userId);
+    else await spindle.storage.write(path, serialized);
   } catch (error) {
     spindle.log.error('Control Room: failed to persist chat ledger', error);
   }
@@ -224,32 +243,34 @@ function normalizeConnections(raw) {
   return [];
 }
 
-async function resolveConnectionId(preferredId, currentId) {
+async function resolveConnectionId(preferredId, currentId, userId) {
   try {
-    const profiles = normalizeConnections(await spindle.connections.list());
+    const profiles = normalizeConnections(await spindle.connections.list(userId));
     if (profiles.length === 0) return preferredId || currentId || undefined;
     if (preferredId && profiles.some(profile => profile.id === preferredId)) return preferredId;
     if (currentId && profiles.some(profile => profile.id === currentId)) return currentId;
     return profiles.find(profile => profile.is_default)?.id || undefined;
   } catch (error) {
+    if (/userId is required/i.test(String(error?.message || error))) throw error;
     spindle.log.warn('Control Room: could not inspect connection profiles; using active connection', error?.message || error);
     return undefined;
   }
 }
 
-async function quietGenerateWithFallback(request, connectionId) {
+async function quietGenerateWithFallback(request, connectionId, userId) {
+  const scopedRequest = { ...request, userId };
   if (connectionId) {
     try {
-      return await spindle.generate.quiet({ ...request, connection_id: connectionId });
+      return await spindle.generate.quiet({ ...scopedRequest, connection_id: connectionId });
     } catch (error) {
       if (error?.name === 'AbortError') throw error;
       spindle.log.warn(`Control Room: selected connection failed (${error?.message || error}); retrying with the active default connection.`);
     }
   }
-  return spindle.generate.quiet(request);
+  return spindle.generate.quiet(scopedRequest);
 }
 
-async function runBackgroundDirectorPass({ connectionId, userAction, precedingBeat, directorContext, ledger, modules, updateTrackers }) {
+async function runBackgroundDirectorPass({ connectionId, userId, userAction, precedingBeat, directorContext, ledger, modules, updateTrackers }) {
   const prompt = `You are a private pre-generation TV continuity engine. Analyze the latest stored roleplay action, not the preset instructions.
 
 ACTIVE MODULES: affinity=${modules.affinity}; continuity=${modules.continuity}; cyoa=${modules.cyoa}; pathfinding=${modules.pathfinding}
@@ -298,7 +319,7 @@ Rules:
       reasoning: { source: 'off' },
       signal: controller.signal
     };
-    const result = await quietGenerateWithFallback(request, connectionId);
+    const result = await quietGenerateWithFallback(request, connectionId, userId);
     const rawContent = result?.content ?? result?.text ?? result?.message?.content;
     const parsed = extractJson(rawContent);
     const rawDelta = Number.isFinite(Number(parsed.delta)) ? Math.trunc(Number(parsed.delta)) : 0;
@@ -319,7 +340,7 @@ Rules:
   }
 }
 
-async function runChoiceWriterPass({ connectionId, option, ledger }) {
+async function runChoiceWriterPass({ connectionId, userId, option, ledger }) {
   const context = ledger.lastContext || {};
   const prompt = `Write a roleplay input for the human user to review and edit before sending.
 
@@ -344,7 +365,7 @@ Requirements:
       parameters: { max_tokens: 500, temperature: 0.75 },
       reasoning: { source: 'off' },
       signal: controller.signal
-    }, connectionId);
+    }, connectionId, userId);
     const text = String(result?.content || '').trim();
     if (!text) throw new Error('choice writer returned empty text');
     return text;
@@ -358,10 +379,10 @@ function mergeUnique(existing, incoming, limit) {
   return [...new Set(values.map(value => String(value).trim()).filter(Boolean))].slice(-limit);
 }
 
-async function resolveActiveChatId(explicitChatId) {
+async function resolveActiveChatId(explicitChatId, userId) {
   if (explicitChatId) return explicitChatId;
   try {
-    const active = await spindle.chats.getActive();
+    const active = await spindle.chats.getActive(userId);
     return active?.id || active?.chatId || 'default';
   } catch {
     return 'default';
@@ -379,9 +400,8 @@ function sendFrontend(payload, userId) {
 
 spindle.onFrontendMessage(async (payload, userId) => {
   if (!payload) return;
-  lastFrontendUserId = userId || lastFrontendUserId;
-  const chatId = await resolveActiveChatId(payload.chatId);
-  let ledger = await getChatLedger(chatId);
+  const chatId = await resolveActiveChatId(payload.chatId, userId);
+  let ledger = await getChatLedger(chatId, userId);
 
   if (payload.type === 'control_room:get_state') {
     let connections = [];
@@ -403,15 +423,14 @@ spindle.onFrontendMessage(async (payload, userId) => {
       ...payload.ledger,
       continuity: { ...ledger.continuity, ...(payload.ledger.continuity || {}) }
     });
-    addLog(ledger, `Manual override saved at affinity ${ledger.affinity}%.`);
-    ledger = await saveChatLedger(chatId, ledger);
+    ledger = await saveChatLedger(chatId, ledger, userId);
     sendFrontend({ type: 'control_room:save_success', chatId, ledger }, userId);
   }
 
   if (payload.type === 'control_room:expand_choice' && payload.option) {
     try {
-      const connectionId = await resolveConnectionId(ledger.selectedConnection, undefined);
-      const text = await runChoiceWriterPass({ connectionId, option: payload.option, ledger });
+      const connectionId = await resolveConnectionId(ledger.selectedConnection, undefined, userId);
+      const text = await runChoiceWriterPass({ connectionId, userId, option: payload.option, ledger });
       sendFrontend({ type: 'control_room:choice_expanded', chatId, requestId: payload.requestId, text }, userId);
     } catch (error) {
       sendFrontend({ type: 'control_room:choice_error', chatId, requestId: payload.requestId, error: error?.message || 'Choice generation failed.' }, userId);
@@ -421,10 +440,11 @@ spindle.onFrontendMessage(async (payload, userId) => {
 
 spindle.registerInterceptor(async (messages, context) => {
   const chatId = context?.chatId || 'default';
+  const userId = context?.userId;
   const modules = detectModules(messages);
   const directorContext = buildDirectorContext(messages);
   const turn = findTurn(messages, context);
-  let ledger = await getChatLedger(chatId);
+  let ledger = await getChatLedger(chatId, userId);
   let turnState = ledger.lastTurn;
 
   const hasActiveWork = modules.affinity || modules.continuity || modules.pathfinding || modules.cyoa || Boolean(ledger.authorNote);
@@ -439,11 +459,12 @@ spindle.registerInterceptor(async (messages, context) => {
     if (isNewTurn) ledger.turnCounter = Number(ledger.turnCounter || 0) + 1;
     const trackerInterval = Math.max(1, Math.min(10, Number(ledger.settings?.trackerInterval || 1)));
     const updateTrackers = modules.continuity && (Number(ledger.turnCounter || 0) - Number(ledger.lastTrackerUpdateTurn || 0) >= trackerInterval);
-    const connectionId = await resolveConnectionId(ledger.selectedConnection, context?.connectionId);
+    const connectionId = await resolveConnectionId(ledger.selectedConnection, context?.connectionId, userId);
     let evaluation;
     try {
       evaluation = await runBackgroundDirectorPass({
         connectionId,
+        userId,
         userAction: turn.userText,
         precedingBeat: turn.precedingBeat,
         directorContext,
@@ -514,10 +535,10 @@ spindle.registerInterceptor(async (messages, context) => {
     ledger.lastTurn = turnState;
     const signedDelta = turnState.delta >= 0 ? `+${turnState.delta}` : String(turnState.delta);
     addLog(ledger, `${evaluation.ok ? (shouldRetryFailedPass ? 'Background retry recovered' : 'Background pass complete') : 'Neutral fallback (will retry)'}: Δ${signedDelta}, affinity ${newAffinity}%, path ${turnState.pathRoll}/4, d20 ${turnState.d20Roll}/20${turnState.trackerUpdated ? ', trackers updated' : ''}.`);
-    ledger = await saveChatLedger(chatId, ledger);
+    ledger = await saveChatLedger(chatId, ledger, userId);
   } else {
     addLog(ledger, `Reused locked turn state for ${context?.generationType || 'generation'}; affinity and dice unchanged.`);
-    ledger = await saveChatLedger(chatId, ledger);
+    ledger = await saveChatLedger(chatId, ledger, userId);
   }
 
   const signedDelta = turnState.delta >= 0 ? `+${turnState.delta}` : String(turnState.delta);
@@ -556,7 +577,7 @@ spindle.registerInterceptor(async (messages, context) => {
   const insertAt = Math.min(Math.max(turn.insertAt, 0), modified.length);
   modified.splice(insertAt, 0, injected);
 
-  sendFrontend({ type: 'control_room:state_data', chatId, ledger }, lastFrontendUserId);
+  sendFrontend({ type: 'control_room:state_data', chatId, ledger }, userId);
   return {
     messages: modified,
     breakdown: [{ messageIndex: insertAt, name: 'Control Room — Locked Director Pass' }]
