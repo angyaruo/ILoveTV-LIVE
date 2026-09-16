@@ -1,6 +1,6 @@
 // Control Room: I Love TV! — Master Frontend
 
-export function setup(ctx) { //
+export function setup(ctx) {
   let currentLedger = {
     affinity: 0,
     dynamic: 'Neutral Ground',
@@ -11,29 +11,40 @@ export function setup(ctx) { //
   let connectionsList = [];
   let activeModal = null;
 
-  // ─── 1. COMPOSER INJECTION ────────────────────────────────────────────────
+  // ─── 1. BULLETPROOF COMPOSER INJECTION ─────────────────────────────────────
   function insertIntoComposer(text) {
-    const ta = document.querySelector('textarea[name="chat-message"], [data-component="InputArea"] textarea, textarea'); //[cite: 3]
+    const ta = document.querySelector('textarea[name="chat-message"]') 
+            || document.querySelector('[data-component="InputArea"] textarea')
+            || document.querySelector('textarea');
+            
     if (!ta) {
-      showToast('⚠️ Could not find chat input box');
+      showToast('⚠️ Could not locate chat input box');
       return;
     }
 
-    const nativeSetter = Object.getOwnPropertyDescriptor(
-      window.HTMLTextAreaElement.prototype,
-      'value'
-    )?.set;
+    ta.focus();
+    ta.select();
 
-    if (nativeSetter) {
-      nativeSetter.call(ta, text);
-    } else {
-      ta.value = text;
+    // Use execCommand first to simulate genuine user typing into React inputs
+    const success = document.execCommand('insertText', false, text);
+
+    if (!success || ta.value !== text) {
+      const nativeSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        'value'
+      )?.set;
+
+      if (nativeSetter) {
+        nativeSetter.call(ta, text);
+      } else {
+        ta.value = text;
+      }
+
+      ta.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      ta.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
     }
 
-    ta.dispatchEvent(new Event('input', { bubbles: true }));
-    ta.dispatchEvent(new Event('change', { bubbles: true }));
-    ta.focus();
-
+    ta.selectionStart = ta.selectionEnd = ta.value.length;
     showToast('✦ Choice copied to composer!');
   }
 
@@ -44,18 +55,18 @@ export function setup(ctx) { //
       toast.id = 'cr-floating-toast';
       toast.style.cssText = `
         position: fixed;
-        bottom: 80px;
+        bottom: 84px;
         left: 50%;
         transform: translateX(-50%);
-        background: var(--lumiverse-fill-strong, #1e1e24);
+        background: var(--lumiverse-fill-strong, #16161e);
         border: 1px solid var(--lumiverse-primary, #8c82ff);
         color: var(--lumiverse-text, #fff);
-        padding: 6px 14px;
+        padding: 6px 16px;
         border-radius: 20px;
         font-size: 12px;
-        font-weight: 600;
-        z-index: 9999;
-        box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+        font-weight: 700;
+        z-index: 99999;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.6);
         pointer-events: none;
         transition: opacity 0.2s ease;
       `;
@@ -63,49 +74,47 @@ export function setup(ctx) { //
     }
     toast.textContent = msg;
     toast.style.opacity = '1';
-    setTimeout(() => { if (toast) toast.style.opacity = '0'; }, 2000);
+    setTimeout(() => { if (toast) toast.style.opacity = '0'; }, 2200);
   }
 
-  // ─── 2. EVENT DELEGATION FOR CYOA CLICKS ──────────────────────────────────
+  // ─── 2. CAPTURE-PHASE CYOA CLICK DELEGATION ───────────────────────────────
+  // true = capture phase, fires BEFORE Lumiverse message stopPropagation()
   document.addEventListener('click', (e) => {
-    const row = e.target.closest('.obs-cyoa-row, .lumi-cyoa-row'); //
+    const row = e.target.closest('.obs-cyoa-row, .lumi-cyoa-row, [class*="cyoa-row"]');
     if (!row) return;
 
     e.preventDefault();
-    const textSpan = row.querySelector('.obs-cyoa-text, .lumi-cyoa-text'); //[cite: 1]
+    e.stopPropagation();
+
+    const textSpan = row.querySelector('.obs-cyoa-text, .lumi-cyoa-text, span:last-child');
     if (textSpan) {
       insertIntoComposer(textSpan.textContent.trim());
     }
-  });
+  }, true);
 
-  // ─── 3. LIVE DOM TELEMETRY SCRAPER ─────────────────────────────────────────
-  function scrapeLiveTelemetry() {
-    const affinityHeaders = Array.from(document.querySelectorAll('.lumi-head-strip, .obs-inset-card, div'));
-    const matchedAffinity = affinityHeaders.reverse().find(el => el.textContent?.includes('CO-STAR') && el.textContent?.includes('%'));
-
-    if (matchedAffinity) {
-      const match = matchedAffinity.textContent.match(/([+-]?\d+)\s*%/);
-      if (match) {
-        const val = parseInt(match[1], 10);
-        const subtextEl = matchedAffinity.closest('.lumi-deck-panel, .obs-deck-panel')?.querySelector('div[style*="italic"], .obs-mono-text');
-        const dynamic = subtextEl ? subtextEl.textContent.replace(/["“”]/g, '').trim() : '';
-
-        if (!isNaN(val) && (val !== currentLedger.affinity || dynamic !== currentLedger.dynamic)) {
-          ctx.sendToBackend({
-            type: 'control_room:sync_telemetry',
-            affinity: val,
-            dynamic: dynamic
-          }); //[cite: 2]
+  // Direct element binding backup
+  function bindCyoaRows() {
+    const rows = document.querySelectorAll('.obs-cyoa-row, .lumi-cyoa-row');
+    rows.forEach(row => {
+      if (row.dataset.crBound) return;
+      row.dataset.crBound = 'true';
+      row.style.cursor = 'pointer';
+      row.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const textSpan = row.querySelector('.obs-cyoa-text, .lumi-cyoa-text, span:last-child');
+        if (textSpan) {
+          insertIntoComposer(textSpan.textContent.trim());
         }
-      }
-    }
+      }, true);
+    });
   }
 
-  // ─── 4. MODAL DASHBOARD ────────────────────────────────────────────────────
+  // ─── 3. MODAL DASHBOARD ────────────────────────────────────────────────────
   function openLedgerDashboard() {
-    ctx.sendToBackend({ type: 'control_room:get_state' }); //[cite: 2]
+    ctx.sendToBackend({ type: 'control_room:get_state' });
 
-    activeModal = ctx.ui.showModal({ //[cite: 2]
+    activeModal = ctx.ui.showModal({
       title: '📺 CONTROL ROOM // BROADCAST DECK',
       width: 460
     });
@@ -137,14 +146,15 @@ export function setup(ctx) { //
 
     const actionsList = (currentLedger.lastActions || []).slice(-8).reverse().map(
       a => `<div style="padding: 2px 0; border-bottom: 1px dashed rgba(255,255,255,0.06);">${esc(a)}</div>`
-    ).join('') || '<div style="color: var(--lumiverse-text-dim, #888);">No recent actions logged.</div>';
+    ).join('') || '<div style="color: var(--lumiverse-text-dim, #888);">No actions logged yet.</div>';
 
     container.innerHTML = `
       <div style="display: flex; flex-direction: column; gap: 4px;">
-        <label style="font-weight: 700; font-size: 11px; text-transform: uppercase; color: var(--lumiverse-primary, #8c82ff);">Control Room Background Profile</label>
+        <label style="font-weight: 700; font-size: 11px; text-transform: uppercase; color: var(--lumiverse-primary, #8c82ff);">Director Background Profile</label>
         <select id="cr-conn-select" style="background: var(--lumiverse-fill-subtle, rgba(255,255,255,0.05)); border: 1px solid var(--lumiverse-border, #444); border-radius: 4px; padding: 6px 8px; color: inherit; outline: none;">
           ${connOptions}
         </select>
+        <span style="font-size: 10px; color: var(--lumiverse-text-dim, #888);">Runs background evaluation calls to judge user actions before each turn.</span>
       </div>
 
       <div style="display: flex; flex-direction: column; gap: 4px;">
@@ -163,12 +173,18 @@ export function setup(ctx) { //
       </div>
 
       <div style="display: flex; flex-direction: column; gap: 4px;">
+        <label style="font-weight: 700; font-size: 11px; text-transform: uppercase; color: var(--lumiverse-text-dim, #888);">Episode Target (Immediate Scene Goal)</label>
+        <input type="text" id="cr-target-input" value="${esc(currentLedger.continuity?.episodeTarget)}" 
+          style="background: var(--lumiverse-fill-subtle, rgba(255,255,255,0.05)); border: 1px solid var(--lumiverse-border, #444); border-radius: 4px; padding: 6px 8px; color: inherit; outline: none;">
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 4px;">
         <label style="font-weight: 700; font-size: 11px; text-transform: uppercase; color: var(--lumiverse-text-dim, #888);">Season Arc</label>
         <textarea id="cr-arc-input" rows="2" style="background: var(--lumiverse-fill-subtle, rgba(255,255,255,0.05)); border: 1px solid var(--lumiverse-border, #444); border-radius: 4px; padding: 6px 8px; color: inherit; outline: none; resize: vertical;">${esc(currentLedger.continuity?.seasonArc)}</textarea>
       </div>
 
       <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 4px;">
-        <label style="font-weight: 700; font-size: 11px; text-transform: uppercase; color: var(--lumiverse-primary, #8c82ff);">Last Actions & Telemetry Feed</label>
+        <label style="font-weight: 700; font-size: 11px; text-transform: uppercase; color: var(--lumiverse-primary, #8c82ff);">Live Director & Telemetry Feed</label>
         <div style="background: rgba(0,0,0,0.4); border: 1px solid var(--lumiverse-border, rgba(255,255,255,0.1)); border-radius: 4px; padding: 8px 10px; font-family: monospace; font-size: 11px; line-height: 1.4; max-height: 110px; overflow-y: auto;">
           ${actionsList}
         </div>
@@ -199,12 +215,12 @@ export function setup(ctx) { //
         selectedConnection: container.querySelector('#cr-conn-select').value,
         continuity: {
           seasonArc: container.querySelector('#cr-arc-input').value.trim(),
-          episodeTarget: currentLedger.continuity?.episodeTarget || ''
+          episodeTarget: container.querySelector('#cr-target-input').value.trim()
         }
       };
 
       currentLedger = { ...currentLedger, ...updated };
-      ctx.sendToBackend({ type: 'control_room:save_ledger', ledger: updated }); //[cite: 2]
+      ctx.sendToBackend({ type: 'control_room:save_ledger', ledger: updated });
       const status = container.querySelector('#cr-status');
       status.textContent = '✦ State & Connection Synced!';
       setTimeout(() => { if (status) status.textContent = ''; }, 2000);
@@ -213,14 +229,13 @@ export function setup(ctx) { //
     root.appendChild(container);
   }
 
-  // ─── 5. MOUNT TOP-RIGHT FLOATING BADGE ───────────────────────────────────────
+  // ─── 4. MOUNT TOP-RIGHT FLOATING BADGE ───────────────────────────────────────
   function mountToolbar() {
     if (document.getElementById('cr-toolbar-btn')) return;
 
     const inputArea = document.querySelector('[data-component="InputArea"]');
     if (!inputArea) return;
 
-    // Ensure the input area container can anchor absolute children
     inputArea.style.position = 'relative';
 
     const btn = document.createElement('button');
@@ -229,13 +244,12 @@ export function setup(ctx) { //
     btn.title = 'Control Room: I Love TV!';
     btn.innerHTML = `
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="pointer-events: none;">
-        <rect width="20" height="15" x="2" y="7" rx="2" rx="2"></rect>
+        <rect width="20" height="15" x="2" y="7" rx="2" ry="2"></rect>
         <polyline points="17 2 12 7 7 2"></polyline>
       </svg>
       <span style="font-family: monospace; font-size: 11px; font-weight: 700;">ON AIR</span>
     `;
 
-    // Docked cleanly right on top of the composer border
     btn.style.cssText = `
       position: absolute;
       top: -32px;
@@ -267,8 +281,8 @@ export function setup(ctx) { //
     inputArea.appendChild(btn);
   }
 
-  // ─── 6. BACKEND IPC SYNC ──────────────────────────────────────────────────
-  const unsub = ctx.onBackendMessage((payload) => { //[cite: 2]
+  // ─── 5. BACKEND IPC SYNC ──────────────────────────────────────────────────
+  const unsub = ctx.onBackendMessage((payload) => {
     if (payload.type === 'control_room:state_data' || payload.type === 'control_room:save_success') {
       if (payload.ledger) currentLedger = payload.ledger;
       if (payload.connections) connectionsList = payload.connections;
@@ -278,12 +292,12 @@ export function setup(ctx) { //
 
   const obs = new MutationObserver(() => {
     mountToolbar();
-    scrapeLiveTelemetry();
+    bindCyoaRows();
   });
   obs.observe(document.body, { childList: true, subtree: true });
 
   mountToolbar();
-  scrapeLiveTelemetry();
+  bindCyoaRows();
 
   return () => {
     obs.disconnect();
