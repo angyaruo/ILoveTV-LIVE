@@ -24,9 +24,9 @@ Required permissions: `generation`, `interceptor`, `chats`, and `ui_panels`.
 
 ## Troubleshooting
 
-The manifest gives the interceptor a 60-second budget; the nested background call cancels itself after 50 seconds. This accommodates reasoning models that spend more than 25 seconds thinking. Choice-writing calls have a separate 90-second budget and show an animated progress indicator. If the background model fails, the visible generation still proceeds with a neutral fallback, marks the exact failure in Prompt Breakdown, and retries on the next regenerate/swipe instead of permanently caching the failure.
+The manifest gives the interceptor a 110-second budget; the nested background call cancels itself after 90 seconds. The director requests a structured tool result and reserves 2,200 output tokens so reasoning models do not spend the entire budget before emitting the tracker payload. Choice-writing calls have a separate 120-second budget and show an animated progress indicator. If the background model fails, the visible generation still proceeds with a neutral fallback, marks the response diagnostics in Prompt Breakdown, and retries on the next regenerate/swipe instead of permanently caching the failure.
 
 Open Prompt Breakdown for a generated response and look for **Control Room — Locked Director Pass**. Its presence confirms that the interceptor completed and injected its result.
 
-Version 1.4.0 fixes the operator-scoped `userId is required` failure. If that exact fallback remains after updating, disable/re-enable the extension (or restart Lumiverse) so the old backend worker is replaced.
+Version 1.5.0 also accepts structured tool calls, text content blocks, and JSON emitted in the reasoning channel. If an older fallback remains after updating, disable/re-enable the extension (or restart Lumiverse) so the old backend worker is replaced.
 
