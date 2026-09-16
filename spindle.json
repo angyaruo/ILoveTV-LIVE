@@ -1,16 +1,19 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "Control Room: I Love TV!",
   "identifier": "lumiverse_control_room",
   "author": "angyaruo",
+  "github": "https://github.com/angyaruo/Mr-TVs-TelePrompter",
+  "homepage": "https://github.com/angyaruo/Mr-TVs-TelePrompter",
+  "description": "Two-pass background director, per-chat continuity ledger, locked dice, affinity tracking, CYOA helpers, and author notes for the I Love TV! preset.",
   "permissions": [
     "generation",
     "interceptor",
     "chats",
-    "ui_panels",
-    "ephemeral_storage"
+    "ui_panels"
   ],
   "entry_backend": "dist/backend.js",
   "entry_frontend": "dist/frontend.js",
-  "interceptorTimeoutMs": 5000
+  "interceptorTimeoutMs": 45000
 }
+

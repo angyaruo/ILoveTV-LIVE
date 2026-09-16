@@ -1,234 +1,392 @@
-// Control Room: I Love TV! — Master Two-Pass Director Engine
+// Control Room: I Love TV! — two-pass director engine
 
-let activeUserId = null;
+const ENGINE_VERSION = '1.1.0';
+const BACKGROUND_TIMEOUT_MS = 25000;
+const MAX_LOG_ENTRIES = 30;
+let lastFrontendUserId;
 
-// ─── STATE & LEDGER STORAGE ──────────────────────────────────────────────────
-async function getChatLedger(chatId = 'default') {
+function defaultLedger() {
+  return {
+    affinity: 0,
+    dynamic: 'Neutral Ground',
+    continuity: {
+      seasonArc: 'A chaotic live broadcast unfolds on set.',
+      episodeTarget: 'Keep the stage live without dead air.',
+      bPlots: [],
+      coreMemories: [],
+      futureBranches: []
+    },
+    selectedConnection: '',
+    authorNote: '',
+    lastTurn: null,
+    lastActions: [`[${new Date().toLocaleTimeString()}] Control Room v${ENGINE_VERSION} initialized.`]
+  };
+}
+
+function normalizeLedger(value) {
+  const base = defaultLedger();
+  const input = value && typeof value === 'object' ? value : {};
+  return {
+    ...base,
+    ...input,
+    affinity: Number.isFinite(Number(input.affinity)) ? Math.max(-100, Math.min(100, Number(input.affinity))) : 0,
+    continuity: {
+      ...base.continuity,
+      ...(input.continuity && typeof input.continuity === 'object' ? input.continuity : {})
+    },
+    lastActions: Array.isArray(input.lastActions) ? input.lastActions.slice(-MAX_LOG_ENTRIES) : base.lastActions
+  };
+}
+
+function safeChatId(chatId) {
+  return String(chatId || 'default').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 160) || 'default';
+}
+
+async function getChatLedger(chatId) {
   try {
-    const raw = await spindle.storage.read(`ledger_${chatId}.json`);
-    return JSON.parse(raw);
+    const raw = await spindle.storage.read(`ledgers/${safeChatId(chatId)}.json`);
+    return normalizeLedger(JSON.parse(raw));
   } catch {
-    return {
-      affinity: 0,
-      dynamic: 'Neutral Ground',
-      continuity: {
-        seasonArc: 'A chaotic live broadcast unfolds on set.',
-        episodeTarget: 'Keep the stage live without dead air.'
-      },
-      selectedConnection: '',
-      lastActions: [
-        `[${new Date().toLocaleTimeString()}] Control Room initialized. Director on standby.`
-      ]
-    };
+    return defaultLedger();
   }
 }
 
-async function saveChatLedger(chatId = 'default', data) {
+async function saveChatLedger(chatId, ledger) {
+  const normalized = normalizeLedger(ledger);
+  normalized.lastActions = normalized.lastActions.slice(-MAX_LOG_ENTRIES);
   try {
-    if (data.lastActions && data.lastActions.length > 20) {
-      data.lastActions = data.lastActions.slice(-20);
-    }
-    await spindle.storage.write(`ledger_${chatId}.json`, JSON.stringify(data, null, 2));
-  } catch (err) {
-    spindle.log.error('Control Room: Failed to persist state ledger', err);
+    await spindle.storage.write(`ledgers/${safeChatId(chatId)}.json`, JSON.stringify(normalized, null, 2));
+  } catch (error) {
+    spindle.log.error('Control Room: failed to persist chat ledger', error);
   }
+  return normalized;
 }
 
 function addLog(ledger, message) {
-  if (!ledger.lastActions) ledger.lastActions = [];
+  ledger.lastActions ||= [];
   ledger.lastActions.push(`[${new Date().toLocaleTimeString()}] ${message}`);
+  ledger.lastActions = ledger.lastActions.slice(-MAX_LOG_ENTRIES);
 }
 
-// ─── FRONTEND IPC EVENT BUS ───────────────────────────────────────────────────
+function textOf(message) {
+  if (typeof message?.content === 'string') return message.content;
+  if (!Array.isArray(message?.content)) return '';
+  return message.content
+    .filter(part => part?.type === 'text' && typeof part.text === 'string')
+    .map(part => part.text)
+    .join('\n');
+}
+
+function hashText(text) {
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function findTurn(messages, context) {
+  const history = messages
+    .map((message, index) => ({ message, index, text: textOf(message) }))
+    .filter(item => item.message?.__isChatHistory);
+
+  let lastUser = [...history].reverse().find(item => item.message.role === 'user');
+  let precedingAssistant;
+  if (lastUser) {
+    precedingAssistant = [...history]
+      .reverse()
+      .find(item => item.index < lastUser.index && item.message.role === 'assistant');
+  }
+
+  // Compatibility fallback for older Lumiverse versions that did not stamp
+  // __isChatHistory. Ignore recognizable preset/control blocks.
+  if (!lastUser) {
+    const candidates = messages.map((message, index) => ({ message, index, text: textOf(message) }));
+    lastUser = [...candidates].reverse().find(item => {
+      if (item.message?.role !== 'user') return false;
+      return !/<(?:scripting_process|script_directions|pre_flight_checklist|control_room_ledger)\b/i.test(item.text);
+    });
+    if (lastUser) {
+      precedingAssistant = [...candidates]
+        .reverse()
+        .find(item => item.index < lastUser.index && item.message?.role === 'assistant');
+    }
+  }
+
+  const userText = lastUser?.text?.trim() || '';
+  const sourceId = lastUser?.message?.sourceMessageId || `idx-${lastUser?.message?.sourceIndexInChat ?? lastUser?.index ?? 'none'}`;
+  const turnKey = `${context?.chatId || 'default'}:${sourceId}:${hashText(userText)}`;
+  const lastHistoryIndex = history.length ? Math.max(...history.map(item => item.index)) : (lastUser?.index ?? -1);
+
+  return {
+    userText,
+    precedingBeat: precedingAssistant?.text?.trim() || '',
+    turnKey,
+    insertAt: Math.max(0, lastHistoryIndex + 1)
+  };
+}
+
+function detectModules(messages) {
+  const assembled = messages.map(textOf).join('\n');
+  const capMatch = assembled.match(/Pacing Cap:\s*Maximum\s*[±+\/-]*\s*(\d+)%/i);
+  return {
+    affinity: /<co_star_chemistry\b|DYNAMIC CO-STAR AFFINITY/i.test(assembled),
+    continuity: /<continuity_reel\b|continuity_reel_summary/i.test(assembled),
+    cyoa: /<cyoa_interactive_mode\b|DIRECTOR'S CUT.+PICK YOUR NEXT MOVE/is.test(assembled),
+    pathfinding: /NARRATIVE PATHFINDING|Creative Pathfinding/i.test(assembled),
+    affinityCap: Math.max(1, Math.min(10, Number(capMatch?.[1] || 3)))
+  };
+}
+
+function cleanStringArray(value, maxItems, maxLength) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(item => typeof item === 'string' && item.trim())
+    .map(item => item.trim().slice(0, maxLength))
+    .slice(0, maxItems);
+}
+
+function extractJson(text) {
+  const cleaned = String(text || '').replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start < 0 || end <= start) throw new Error('background response did not contain a JSON object');
+  return JSON.parse(cleaned.slice(start, end + 1));
+}
+
+async function resolveConnectionId(preferredId, currentId) {
+  try {
+    const profiles = await spindle.connections.list();
+    if (!Array.isArray(profiles) || profiles.length === 0) return undefined;
+    if (preferredId && profiles.some(profile => profile.id === preferredId)) return preferredId;
+    if (currentId && profiles.some(profile => profile.id === currentId)) return currentId;
+    return profiles.find(profile => profile.is_default)?.id || undefined;
+  } catch (error) {
+    spindle.log.warn('Control Room: could not inspect connection profiles; using active connection', error?.message || error);
+    return undefined;
+  }
+}
+
+async function runBackgroundDirectorPass({ connectionId, userAction, precedingBeat, ledger, modules }) {
+  const prompt = `You are a private pre-generation TV continuity engine. Analyze the latest stored roleplay action, not the preset instructions.
+
+ACTIVE MODULES: affinity=${modules.affinity}; continuity=${modules.continuity}; cyoa=${modules.cyoa}; pathfinding=${modules.pathfinding}
+CURRENT LEDGER:
+${JSON.stringify({ affinity: ledger.affinity, dynamic: ledger.dynamic, continuity: ledger.continuity })}
+
+PREVIOUS ASSISTANT BEAT:
+${precedingBeat.slice(-1800) || '(none)'}
+
+LATEST USER ACTION:
+${userAction.slice(-1800) || '(continue/regenerate without a new user action)'}
+
+Return ONLY one valid JSON object with this shape:
+{"delta":0,"dynamic":"brief emotional subtext","episodeTarget":"immediate scene goal","seasonArc":"one-sentence trajectory","bPlots":["unresolved thread"],"coreMemories":["durable established fact"],"futureBranches":["plausible future turn"]}
+
+Rules:
+- delta is an integer from -${modules.affinityCap} to +${modules.affinityCap}; use 0 for routine or ambiguous actions. If affinity=false, delta must be 0.
+- Judge the character-specific effect, not whether the writing is morally good.
+- Preserve established facts. Core memories must be durable continuity facts, not prose summaries.
+- Keep each array to at most 3 short items.`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), BACKGROUND_TIMEOUT_MS);
+  try {
+    const request = {
+      messages: [{ role: 'user', content: prompt }],
+      parameters: { max_tokens: 420, temperature: 0.2 },
+      reasoning: { source: 'off' },
+      signal: controller.signal
+    };
+    if (connectionId) request.connection_id = connectionId;
+    const result = await spindle.generate.quiet(request);
+    const parsed = extractJson(result?.content);
+    const rawDelta = Number.isFinite(Number(parsed.delta)) ? Math.trunc(Number(parsed.delta)) : 0;
+    return {
+      ok: true,
+      delta: modules.affinity ? Math.max(-modules.affinityCap, Math.min(modules.affinityCap, rawDelta)) : 0,
+      dynamic: String(parsed.dynamic || ledger.dynamic || 'Scene tension holds.').slice(0, 240),
+      episodeTarget: String(parsed.episodeTarget || ledger.continuity.episodeTarget || '').slice(0, 320),
+      seasonArc: String(parsed.seasonArc || ledger.continuity.seasonArc || '').slice(0, 320),
+      bPlots: cleanStringArray(parsed.bPlots, 3, 240),
+      coreMemories: cleanStringArray(parsed.coreMemories, 3, 240),
+      futureBranches: cleanStringArray(parsed.futureBranches, 3, 240)
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function mergeUnique(existing, incoming, limit) {
+  const values = [...(Array.isArray(existing) ? existing : []), ...(Array.isArray(incoming) ? incoming : [])];
+  return [...new Set(values.map(value => String(value).trim()).filter(Boolean))].slice(-limit);
+}
+
+async function resolveActiveChatId(explicitChatId) {
+  if (explicitChatId) return explicitChatId;
+  try {
+    const active = await spindle.chats.getActive();
+    return active?.id || active?.chatId || 'default';
+  } catch {
+    return 'default';
+  }
+}
+
+function sendFrontend(payload, userId) {
+  try {
+    if (userId) spindle.sendToFrontend(payload, userId);
+    else spindle.sendToFrontend(payload);
+  } catch (error) {
+    spindle.log.warn('Control Room: frontend update failed', error?.message || error);
+  }
+}
+
 spindle.onFrontendMessage(async (payload, userId) => {
   if (!payload) return;
-  activeUserId = userId;
-  const chatId = payload.chatId || 'default';
+  lastFrontendUserId = userId || lastFrontendUserId;
+  const chatId = await resolveActiveChatId(payload.chatId);
   let ledger = await getChatLedger(chatId);
 
-  // 1. Initial State & Connection Profiles Fetch
   if (payload.type === 'control_room:get_state') {
     let connections = [];
     try {
-      if (spindle.connections?.list) {
-        const rawConns = await spindle.connections.list(userId);
-        const list = Array.isArray(rawConns) ? rawConns : (rawConns?.data ?? []);
-        connections = list.map(c => ({
-          id: c.id,
-          name: c.name || c.label || c.model || 'Connection Profile'
-        }));
-      }
-    } catch (err) {
-      spindle.log.warn('Control Room: Could not list connections', err);
+      const profiles = await spindle.connections.list();
+      connections = (Array.isArray(profiles) ? profiles : []).map(profile => ({
+        id: profile.id,
+        name: profile.name || profile.label || profile.model || 'Connection Profile'
+      }));
+    } catch (error) {
+      spindle.log.warn('Control Room: could not list connections', error?.message || error);
     }
-
-    spindle.sendToFrontend({
-      type: 'control_room:state_data',
-      ledger,
-      connections
-    }, userId);
+    sendFrontend({ type: 'control_room:state_data', chatId, ledger, connections }, userId);
   }
 
-  // 2. Manual Override Save from Modal Dashboard
-  if (payload.type === 'control_room:save_ledger') {
-    if (payload.ledger) {
-      ledger = { ...ledger, ...payload.ledger };
-      addLog(ledger, `Manual Override: Affinity locked at ${ledger.affinity}%`);
-      await saveChatLedger(chatId, ledger);
-      spindle.sendToFrontend({ type: 'control_room:save_success', ledger }, userId);
-    }
+  if (payload.type === 'control_room:save_ledger' && payload.ledger) {
+    ledger = normalizeLedger({
+      ...ledger,
+      ...payload.ledger,
+      continuity: { ...ledger.continuity, ...(payload.ledger.continuity || {}) }
+    });
+    addLog(ledger, `Manual override saved at affinity ${ledger.affinity}%.`);
+    ledger = await saveChatLedger(chatId, ledger);
+    sendFrontend({ type: 'control_room:save_success', chatId, ledger }, userId);
   }
 });
 
-// ─── PASS 1: BACKGROUND LLM ARBITRATION ──────────────────────────────────────
-async function runBackgroundDirectorPass(userId, connectionId, userAction, charContext, currentAffinity) {
-  try {
-    const connections = await spindle.connections.list(userId);
-    let targetConn = null;
-    if (connectionId) {
-      targetConn = connections?.find(c => c.id === connectionId);
-    }
-    if (!targetConn) {
-      targetConn = connections?.find(c => c.is_default) ?? connections?.[0];
-    }
-
-    if (!targetConn) {
-      throw new Error('No connection profile available for background pass.');
-    }
-
-    const evalPrompt = `You are the behind-the-scenes TV Showrunner and dramatic judge.
-Current Co-Star Affinity: ${currentAffinity}% (-100% to +100%)
-Recent Context:
-${charContext.slice(-600)}
-
-Latest User Action:
-"${userAction || '(User maintained scene momentum)'}"
-
-Evaluate the impact of the user's action on the character.
-Respond ONLY with a valid JSON object in this exact format, with no markdown code blocks or extra text:
-{"delta": 0, "dynamic": "concise description of character reaction", "target": "immediate scene goal"}
-Note: "delta" must be an integer between -3 and +3.`;
-
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Background pass timed out')), 5000)
-    );
-
-    const genPromise = spindle.generate.quiet({
-      type: 'quiet',
-      userId,
-      connection_id: targetConn.id,
-      messages: [{ role: 'user', content: evalPrompt }],
-      parameters: { max_tokens: 180, temperature: 0.3 },
-      reasoning: { source: 'off' }
-    });
-
-    const result = await Promise.race([genPromise, timeoutPromise]);
-    let raw = (result?.content ?? '').trim();
-    raw = raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
-    const match = raw.match(/\{[\s\S]*?\}/);
-
-    if (match) {
-      const parsed = JSON.parse(match[0]);
-      return {
-        delta: typeof parsed.delta === 'number' ? Math.max(-5, Math.min(5, parsed.delta)) : 0,
-        dynamic: parsed.dynamic || 'Tension lingers on set.',
-        target: parsed.target || 'Resolve the ongoing interaction.'
-      };
-    }
-  } catch (err) {
-    spindle.log.warn('Control Room: Background pass failed or timed out, falling back to neutral:', err?.message);
-  }
-
-  return { delta: 0, dynamic: 'Scene continues under live lights.', target: 'Maintain stage presence.' };
-}
-
-// ─── PASS 2: PROMPT INTERCEPTOR & LEDGER INJECTION ───────────────────────────
 spindle.registerInterceptor(async (messages, context) => {
   const chatId = context?.chatId || 'default';
-  const userId = context?.userId || activeUserId || 'default';
+  const modules = detectModules(messages);
+  const turn = findTurn(messages, context);
   let ledger = await getChatLedger(chatId);
+  let turnState = ledger.lastTurn;
 
-  // 1. Extract last user input and preceding assistant beat for background context
-  let lastUserText = '';
-  let precedingBeat = '';
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'user' && !lastUserText) {
-      lastUserText = typeof messages[i].content === 'string' 
-        ? messages[i].content 
-        : JSON.stringify(messages[i].content);
-    } else if (messages[i].role === 'assistant' && !precedingBeat) {
-      precedingBeat = typeof messages[i].content === 'string'
-        ? messages[i].content
-        : JSON.stringify(messages[i].content);
+  const hasActiveWork = modules.affinity || modules.continuity || modules.pathfinding || modules.cyoa || Boolean(ledger.authorNote);
+  if (!hasActiveWork) return messages;
+
+  // A regenerate, continue, or new swipe for the same source user message reuses
+  // the first evaluation and dice. It must not compound affinity or reroll fate.
+  if (!turnState || turnState.key !== turn.turnKey) {
+    const previousAffinity = ledger.affinity;
+    const connectionId = await resolveConnectionId(ledger.selectedConnection, context?.connectionId);
+    let evaluation;
+    try {
+      evaluation = await runBackgroundDirectorPass({
+        connectionId,
+        userAction: turn.userText,
+        precedingBeat: turn.precedingBeat,
+        ledger,
+        modules
+      });
+    } catch (error) {
+      const reason = error?.name === 'AbortError' ? 'timed out' : (error?.message || 'unknown error');
+      spindle.log.warn(`Control Room: background director pass failed (${reason}); injecting locked neutral state.`);
+      evaluation = {
+        ok: false,
+        delta: 0,
+        dynamic: ledger.dynamic,
+        episodeTarget: ledger.continuity.episodeTarget,
+        seasonArc: ledger.continuity.seasonArc,
+        bPlots: ledger.continuity.bPlots,
+        coreMemories: [],
+        futureBranches: ledger.continuity.futureBranches
+      };
     }
-    if (lastUserText && precedingBeat) break;
+
+    const newAffinity = modules.affinity
+      ? Math.max(-100, Math.min(100, previousAffinity + evaluation.delta))
+      : previousAffinity;
+
+    ledger.affinity = newAffinity;
+    ledger.dynamic = evaluation.dynamic || ledger.dynamic;
+    ledger.continuity = {
+      ...ledger.continuity,
+      episodeTarget: evaluation.episodeTarget || ledger.continuity.episodeTarget,
+      seasonArc: evaluation.seasonArc || ledger.continuity.seasonArc,
+      bPlots: evaluation.bPlots?.length ? evaluation.bPlots : ledger.continuity.bPlots,
+      coreMemories: mergeUnique(ledger.continuity.coreMemories, evaluation.coreMemories, 12),
+      futureBranches: evaluation.futureBranches?.length ? evaluation.futureBranches : ledger.continuity.futureBranches
+    };
+
+    turnState = {
+      key: turn.turnKey,
+      sourceTextHash: hashText(turn.userText),
+      previousAffinity,
+      delta: evaluation.delta,
+      newAffinity,
+      pathRoll: Math.floor(Math.random() * 4) + 1,
+      d20Roll: Math.floor(Math.random() * 20) + 1,
+      evaluatedAt: new Date().toISOString(),
+      backgroundSucceeded: evaluation.ok
+    };
+    ledger.lastTurn = turnState;
+    const signedDelta = turnState.delta >= 0 ? `+${turnState.delta}` : String(turnState.delta);
+    addLog(ledger, `${evaluation.ok ? 'Background pass complete' : 'Neutral fallback'}: Δ${signedDelta}, affinity ${newAffinity}%, path ${turnState.pathRoll}/4, d20 ${turnState.d20Roll}/20.`);
+    ledger = await saveChatLedger(chatId, ledger);
+  } else {
+    addLog(ledger, `Reused locked turn state for ${context?.generationType || 'generation'}; affinity and dice unchanged.`);
+    ledger = await saveChatLedger(chatId, ledger);
   }
 
-  // 2. Execute Pass 1: Background evaluation call via quiet generation
-  const previousAffinity = ledger.affinity;
-  const evaluation = await runBackgroundDirectorPass(
-    userId,
-    ledger.selectedConnection,
-    lastUserText,
-    precedingBeat,
-    previousAffinity
-  );
+  const signedDelta = turnState.delta >= 0 ? `+${turnState.delta}` : String(turnState.delta);
+  const lines = [
+    '<control_room_ledger priority="CRITICAL">',
+    '[STUDIO CONTROL ROOM // LOCKED PRE-GENERATION RESULT]',
+    `Generation type: ${context?.generationType || 'normal'}`,
+    `Active preset modules: affinity=${modules.affinity}; continuity=${modules.continuity}; cyoa=${modules.cyoa}; pathfinding=${modules.pathfinding}`,
+    `Previous affinity: ${turnState.previousAffinity}%`,
+    `Evaluated delta: ${signedDelta}%`,
+    `Locked affinity: ${turnState.newAffinity}%`,
+    `Dynamic subtext: ${ledger.dynamic}`,
+    `Immediate episode target: ${ledger.continuity.episodeTarget}`,
+    `LOCKED PATHFINDER ROLL: ${turnState.pathRoll}/4. In script_directions, Path ${turnState.pathRoll} is mandatory; ignore and do not perform any other 1d4 path roll.`,
+    `LOCKED D20 ACTION CHECK: ${turnState.d20Roll}/20 (${turnState.d20Roll >= 10 ? 'SUCCESS' : 'CHALLENGE'}). Do not reroll it.`
+  ];
 
-  // 3. Compute canonical arithmetic in JS (clamped between -100% and +100%)
-  const newAffinity = Math.max(-100, Math.min(100, previousAffinity + evaluation.delta));
-  ledger.affinity = newAffinity;
-  ledger.dynamic = evaluation.dynamic;
-  if (evaluation.target) {
-    ledger.continuity.episodeTarget = evaluation.target;
+  if (modules.continuity) {
+    lines.push(`Season arc: ${ledger.continuity.seasonArc}`);
+    lines.push(`B-plots / flags: ${(ledger.continuity.bPlots || []).join(' | ') || '(none yet)'}`);
+    lines.push(`Core memories: ${(ledger.continuity.coreMemories || []).join(' | ') || '(none yet)'}`);
+    lines.push(`Possible future branches: ${(ledger.continuity.futureBranches || []).join(' | ') || '(none yet)'}`);
   }
+  if (ledger.authorNote?.trim()) lines.push(`AUTHOR NOTE FOR THIS AND FUTURE TURNS: ${ledger.authorNote.trim()}`);
+  if (modules.affinity) {
+    lines.push(`Output this exact telemetry tag at the end: [Affinity: ${turnState.newAffinity}% | Δ(${signedDelta}%) | Dynamic: "${ledger.dynamic}"]`);
+    lines.push('Do not recalculate or replace the locked values.');
+  }
+  lines.push('</control_room_ledger>');
 
-  // 4. Deterministic Studio Dice Rolls
-  const pathRoll = Math.floor(Math.random() * 4) + 1;
-  const d20Roll = Math.floor(Math.random() * 20) + 1;
-  const deltaStr = evaluation.delta >= 0 ? `+${evaluation.delta}` : `${evaluation.delta}`;
-
-  addLog(
-    ledger,
-    `⚡ Pass Complete! Δ(${deltaStr}%) -> Affinity: ${newAffinity}% | Path [${pathRoll}/4] | D20 [${d20Roll}/20]`
-  );
-  await saveChatLedger(chatId, ledger);
-
-  // Push real-time update to the frontend modal
-  spindle.sendToFrontend({ type: 'control_room:state_data', ledger }, userId);
-
-  // 5. Inject the calculated ground truth into the main prompt
-  const ledgerTag = {
-    role: 'system',
-    content: `<control_room_ledger priority="CRITICAL">
-[STUDIO CONTROL ROOM // LIVE DIRECTOR EVALUATION]
-* PREVIOUS AFFINITY: ${previousAffinity}%
-* EVALUATED DELTA: ${deltaStr}%
-* NEW TOTAL AFFINITY: ${newAffinity}% (Dynamic Tone: "${ledger.dynamic}")
-* IMMEDIATE EPISODE TARGET: ${ledger.continuity.episodeTarget}
-* PRE-ROLLED PATHFINDER: [${pathRoll}/4] -> MANDATE: Follow Path ${pathRoll} in your thinking block.
-* D20 ACTION CHECK: Rolled [${d20Roll}/20] -> Result: ${d20Roll >= 10 ? 'SUCCESS' : 'CHALLENGE'}.
-
-BROADCAST DIRECTIVE TO ASSISTANT:
-1. Ground character behavior in the new affinity score (${newAffinity}%).
-2. You MUST output this exact tag at the end of your response:
-[Affinity: ${newAffinity}% | Δ(${deltaStr}%) | Dynamic: "${ledger.dynamic}"]
-Do not alter these values or calculate alternative math.
-</control_room_ledger>`
-  };
-
+  const injected = { role: 'system', content: lines.join('\n') };
   const modified = [...messages];
-  let lastUserIdx = -1;
-  for (let i = modified.length - 1; i >= 0; i--) {
-    if (modified[i].role === 'user') {
-      lastUserIdx = i;
-      break;
-    }
-  }
+  const insertAt = Math.min(Math.max(turn.insertAt, 0), modified.length);
+  modified.splice(insertAt, 0, injected);
 
-  const insertAt = lastUserIdx !== -1 ? lastUserIdx : modified.length;
-  modified.splice(insertAt, 0, ledgerTag);
-
-  return modified;
+  sendFrontend({ type: 'control_room:state_data', chatId, ledger }, lastFrontendUserId);
+  return {
+    messages: modified,
+    breakdown: [{ messageIndex: insertAt, name: 'Control Room — Locked Director Pass' }]
+  };
 }, 10);
 
-spindle.log.info('Control Room: Two-Pass Director Engine Initialized!');
+spindle.log.info(`Control Room: Two-Pass Director Engine v${ENGINE_VERSION} initialized.`);
+
