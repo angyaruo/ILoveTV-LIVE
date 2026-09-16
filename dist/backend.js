@@ -1,8 +1,8 @@
 // Control Room: I Love TV! — two-pass director engine
 
-const ENGINE_VERSION = '1.4.0';
-const DIRECTOR_TIMEOUT_MS = 50000;
-const CHOICE_TIMEOUT_MS = 90000;
+const ENGINE_VERSION = '1.5.0';
+const DIRECTOR_TIMEOUT_MS = 90000;
+const CHOICE_TIMEOUT_MS = 120000;
 const MAX_LOG_ENTRIES = 30;
 
 function defaultLedger() {
@@ -236,6 +236,65 @@ function extractJson(text) {
   throw new Error('background response contained incomplete JSON');
 }
 
+function contentToText(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter(part => typeof part === 'string' || part?.type === 'text')
+    .map(part => typeof part === 'string' ? part : String(part.text || ''))
+    .join('\n');
+}
+
+function generationText(result) {
+  if (typeof result === 'string') return result;
+  return contentToText(result?.content)
+    || contentToText(result?.message?.content)
+    || (typeof result?.text === 'string' ? result.text : '');
+}
+
+function generationDiagnostic(result) {
+  const content = generationText(result);
+  const reasoning = typeof result?.reasoning === 'string' ? result.reasoning : '';
+  const finish = result?.finish_reason || result?.finishReason || 'unknown';
+  const tools = Array.isArray(result?.tool_calls) ? result.tool_calls.length : 0;
+  return `finish=${finish}, content=${content.length} chars, reasoning=${reasoning.length} chars, toolCalls=${tools}`;
+}
+
+function directorPayload(result) {
+  for (const call of Array.isArray(result?.tool_calls) ? result.tool_calls : []) {
+    if (call?.name !== 'record_control_room_analysis') continue;
+    const args = call.args ?? call.input ?? call.arguments;
+    if (args && typeof args === 'object') return args;
+    if (typeof args === 'string') return extractJson(args);
+  }
+  const candidates = [generationText(result), typeof result?.reasoning === 'string' ? result.reasoning : ''];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try { return extractJson(candidate); } catch { /* try the next response channel */ }
+  }
+  throw new Error(`background response did not contain analysis JSON (${generationDiagnostic(result)})`);
+}
+
+const DIRECTOR_TOOL = {
+  name: 'record_control_room_analysis',
+  description: 'Record the private pre-generation relationship and continuity analysis. Call exactly once.',
+  parameters: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      baselineAffinity: { type: 'integer', minimum: -100, maximum: 100 },
+      delta: { type: 'integer', minimum: -10, maximum: 10 },
+      dynamic: { type: 'string' },
+      episodeTarget: { type: 'string' },
+      seasonArc: { type: 'string' },
+      bPlots: { type: 'array', items: { type: 'string' }, maxItems: 3 },
+      coreMemories: { type: 'array', items: { type: 'string' }, maxItems: 3 },
+      futureBranches: { type: 'array', items: { type: 'string' }, maxItems: 3 }
+    },
+    required: ['baselineAffinity', 'delta', 'dynamic', 'episodeTarget', 'seasonArc', 'bPlots', 'coreMemories', 'futureBranches']
+  }
+};
+
 function normalizeConnections(raw) {
   if (Array.isArray(raw)) return raw;
   if (Array.isArray(raw?.data)) return raw.data;
@@ -291,7 +350,7 @@ ${precedingBeat.slice(-1800) || '(none)'}
 LATEST USER ACTION:
 ${userAction.slice(-1800) || '(continue/regenerate without a new user action)'}
 
-Return ONLY one valid JSON object with this shape:
+Call the record_control_room_analysis tool exactly once with this shape (if tool calling is unavailable, return ONLY the equivalent JSON object):
 {"baselineAffinity":0,"delta":0,"dynamic":"markdown relationship analysis","episodeTarget":"short-term objective and user progress","seasonArc":"long-term mission and user progress","bPlots":["decision/flag and possible consequence"],"coreMemories":["character or NPC: psyche-shaping event"],"futureBranches":["predicted plausible branch"]}
 
 Rules:
@@ -315,13 +374,23 @@ Rules:
   try {
     const request = {
       messages: [{ role: 'user', content: prompt }],
-      parameters: { max_tokens: 420, temperature: 0.2 },
+      parameters: { max_tokens: 2200, temperature: 0.2 },
+      tools: [DIRECTOR_TOOL],
       reasoning: { source: 'off' },
       signal: controller.signal
     };
-    const result = await quietGenerateWithFallback(request, connectionId, userId);
-    const rawContent = result?.content ?? result?.text ?? result?.message?.content;
-    const parsed = extractJson(rawContent);
+    let result;
+    try {
+      result = await quietGenerateWithFallback(request, connectionId, userId);
+    } catch (error) {
+      const reason = String(error?.message || error);
+      if (!/tool|function|schema|unsupported|not supported|invalid.*request/i.test(reason)) throw error;
+      spindle.log.warn(`Control Room: structured director output unavailable (${reason}); retrying in plain JSON mode.`);
+      const { tools: _omitTools, ...plainRequest } = request;
+      void _omitTools;
+      result = await quietGenerateWithFallback(plainRequest, connectionId, userId);
+    }
+    const parsed = directorPayload(result);
     const rawDelta = Number.isFinite(Number(parsed.delta)) ? Math.trunc(Number(parsed.delta)) : 0;
     const rawBaseline = Number.isFinite(Number(parsed.baselineAffinity)) ? Math.trunc(Number(parsed.baselineAffinity)) : Number(ledger.affinityBaseline || 0);
     return {
@@ -362,12 +431,12 @@ Requirements:
   try {
     const result = await quietGenerateWithFallback({
       messages: [{ role: 'user', content: prompt }],
-      parameters: { max_tokens: 500, temperature: 0.75 },
+      parameters: { max_tokens: 1600, temperature: 0.75 },
       reasoning: { source: 'off' },
       signal: controller.signal
     }, connectionId, userId);
-    const text = String(result?.content || '').trim();
-    if (!text) throw new Error('choice writer returned empty text');
+    const text = generationText(result).trim();
+    if (!text) throw new Error(`choice writer returned empty text (${generationDiagnostic(result)})`);
     return text;
   } finally {
     clearTimeout(timer);
@@ -431,8 +500,14 @@ spindle.onFrontendMessage(async (payload, userId) => {
     try {
       const connectionId = await resolveConnectionId(ledger.selectedConnection, undefined, userId);
       const text = await runChoiceWriterPass({ connectionId, userId, option: payload.option, ledger });
+      addLog(ledger, 'CYOA writer completed and sent an editable draft to the composer.');
+      ledger = await saveChatLedger(chatId, ledger, userId);
       sendFrontend({ type: 'control_room:choice_expanded', chatId, requestId: payload.requestId, text }, userId);
     } catch (error) {
+      const reason = error?.name === 'AbortError' ? 'timed out' : (error?.message || 'Choice generation failed.');
+      addLog(ledger, `CYOA writer failed: ${reason}`);
+      ledger = await saveChatLedger(chatId, ledger, userId);
+      spindle.log.warn(`Control Room: CYOA writer failed (${reason}).`);
       sendFrontend({ type: 'control_room:choice_error', chatId, requestId: payload.requestId, error: error?.message || 'Choice generation failed.' }, userId);
     }
   }
