@@ -1,23 +1,26 @@
 // Control Room: I Love TV! — two-pass director engine
 
-const ENGINE_VERSION = '1.2.0';
-const BACKGROUND_TIMEOUT_MS = 25000;
+const ENGINE_VERSION = '1.3.0';
+const DIRECTOR_TIMEOUT_MS = 50000;
+const CHOICE_TIMEOUT_MS = 90000;
 const MAX_LOG_ENTRIES = 30;
 let lastFrontendUserId;
 
 function defaultLedger() {
   return {
     affinity: 0,
-    dynamic: 'Neutral Ground',
+    dynamic: '',
     continuity: {
-      seasonArc: 'A chaotic live broadcast unfolds on set.',
-      episodeTarget: 'Keep the stage live without dead air.',
+      seasonArc: '',
+      episodeTarget: '',
       bPlots: [],
       coreMemories: [],
       futureBranches: []
     },
     selectedConnection: '',
     authorNote: '',
+    baselineCalibrated: false,
+    affinityBaseline: 0,
     settings: {
       expandChoices: true,
       trackerInterval: 1
@@ -33,7 +36,7 @@ function defaultLedger() {
 function normalizeLedger(value) {
   const base = defaultLedger();
   const input = value && typeof value === 'object' ? value : {};
-  return {
+  const normalized = {
     ...base,
     ...input,
     affinity: Number.isFinite(Number(input.affinity)) ? Math.max(-100, Math.min(100, Number(input.affinity))) : 0,
@@ -49,6 +52,12 @@ function normalizeLedger(value) {
     },
     lastActions: Array.isArray(input.lastActions) ? input.lastActions.slice(-MAX_LOG_ENTRIES) : base.lastActions
   };
+  // v1.1/v1.2 shipped decorative defaults that looked like real analysis.
+  // Clear them so the UI truthfully waits for the first successful director pass.
+  if (normalized.dynamic === 'Neutral Ground') normalized.dynamic = '';
+  if (normalized.continuity.episodeTarget === 'Keep the stage live without dead air.') normalized.continuity.episodeTarget = '';
+  if (normalized.continuity.seasonArc === 'A chaotic live broadcast unfolds on set.') normalized.continuity.seasonArc = '';
+  return normalized;
 }
 
 function safeChatId(chatId) {
@@ -156,6 +165,22 @@ function detectModules(messages) {
   };
 }
 
+function buildDirectorContext(messages) {
+  const history = messages
+    .filter(message => message?.__isChatHistory)
+    .slice(-10)
+    .map(message => `${message.role.toUpperCase()}: ${textOf(message)}`)
+    .join('\n\n')
+    .slice(-7000);
+  const dossier = messages
+    .filter(message => message?.role === 'system')
+    .map(textOf)
+    .filter(text => /CAST DOSSIER|CHAR DESCRIPTION|PERSONALITY|SCENARIO|RELATIONSHIP|CO-STAR|HEARTTHROB|FATAL ATTRACTION|VIP FAVORITISM|REALITY CHECK/i.test(text))
+    .join('\n\n')
+    .slice(0, 7000);
+  return { history, dossier };
+}
+
 function cleanStringArray(value, maxItems, maxLength) {
   if (!Array.isArray(value)) return [];
   return value
@@ -224,14 +249,20 @@ async function quietGenerateWithFallback(request, connectionId) {
   return spindle.generate.quiet(request);
 }
 
-async function runBackgroundDirectorPass({ connectionId, userAction, precedingBeat, ledger, modules, updateTrackers }) {
+async function runBackgroundDirectorPass({ connectionId, userAction, precedingBeat, directorContext, ledger, modules, updateTrackers }) {
   const prompt = `You are a private pre-generation TV continuity engine. Analyze the latest stored roleplay action, not the preset instructions.
 
 ACTIVE MODULES: affinity=${modules.affinity}; continuity=${modules.continuity}; cyoa=${modules.cyoa}; pathfinding=${modules.pathfinding}
 ACTIVE RELATIONSHIP MODIFIERS: fatalAttraction=${modules.fatalAttraction}; vipFavoritism=${modules.vipFavoritism}; realityCheck=${modules.realityCheck}
 UPDATE CONTINUITY TRACKERS THIS TURN: ${updateTrackers}
 CURRENT LEDGER:
-${JSON.stringify({ affinity: ledger.affinity, dynamic: ledger.dynamic, continuity: ledger.continuity })}
+${JSON.stringify({ affinity: ledger.affinity, baselineCalibrated: ledger.baselineCalibrated, affinityBaseline: ledger.affinityBaseline, dynamic: ledger.dynamic, continuity: ledger.continuity })}
+
+CHARACTER / PERSONA / RELATIONSHIP DOSSIER EXCERPTS:
+${directorContext?.dossier || '(no matching dossier excerpt was assembled)'}
+
+RECENT STORED CHAT HISTORY:
+${directorContext?.history || '(no stored history was available)'}
 
 PREVIOUS ASSISTANT BEAT:
 ${precedingBeat.slice(-1800) || '(none)'}
@@ -240,19 +271,26 @@ LATEST USER ACTION:
 ${userAction.slice(-1800) || '(continue/regenerate without a new user action)'}
 
 Return ONLY one valid JSON object with this shape:
-{"delta":0,"dynamic":"brief emotional subtext","episodeTarget":"immediate scene goal","seasonArc":"one-sentence trajectory","bPlots":["unresolved thread"],"coreMemories":["durable established fact"],"futureBranches":["plausible future turn"]}
+{"baselineAffinity":0,"delta":0,"dynamic":"markdown relationship analysis","episodeTarget":"short-term objective and user progress","seasonArc":"long-term mission and user progress","bPlots":["decision/flag and possible consequence"],"coreMemories":["character or NPC: psyche-shaping event"],"futureBranches":["predicted plausible branch"]}
 
 Rules:
-- delta is an integer from -${modules.affinityCap} to +${modules.affinityCap}. If affinity=false, delta must be 0.
+- This is an autonomous analytical pass. Do not leave fields generic, decorative, or unchanged merely because the latest action is subtle.
+- If baselineCalibrated=false, establish baselineAffinity from the actual {{char}}/{{user}} relationship in the provided context: strangers near 0; established allies/friends positive; lovers strongly positive; rivals/enemies negative. Active relationship modifiers can move that baseline. If baselineCalibrated=true, copy the existing affinityBaseline.
+- delta measures the latest user action only and is an integer from -${modules.affinityCap} to +${modules.affinityCap}. Clearly supportive/helpful/intimate actions must normally be positive; betrayal/harm/rejection must normally be negative; use 0 only when the effect is genuinely neutral for this specific character.
 - Account for active relationship modifiers. If Fatal Attraction or VIP Favoritism makes the character genuinely respond positively to an otherwise routine action, return a positive delta rather than describing attraction while leaving affinity neutral. Reality Check should resist unearned positive movement.
 - The visible character response will be locked to this result: delta 0 at total affinity 0 means emotionally neutral behavior, not covertly positive behavior.
 - Judge the character-specific effect, not whether the writing is morally good.
-- Preserve established facts. Core memories must be durable continuity facts, not prose summaries.
+- dynamic is a concise but comprehensive Markdown relationship analysis. Cover {{char}} and each relevant NPC separately, explaining stance toward {{user}}, emotional pressure, trust/attraction/hostility, and the evidence behind it.
+- episodeTarget states the immediate short-term narrative objective and {{user}}'s current progress, preserving continuity while naming the next live possibility.
+- seasonArc states the overarching long-term mission/conflict and {{user}}'s progress toward or away from it.
+- bPlots stores consequential user decisions, unresolved details, promises, secrets, risks, and Chekhov flags that may resurface.
+- coreMemories stores only events that permanently shape {{char}} or an NPC's psyche. Prefix each memory with the affected character/NPC; memories may later be reinterpreted but never forgotten.
+- futureBranches predicts plausible narrative branches from all current decisions, dynamics, objectives, flags, and memories; do not command a single railroaded outcome.
 - If UPDATE CONTINUITY TRACKERS THIS TURN is false, preserve the supplied episodeTarget/seasonArc and return empty tracker arrays.
 - Keep each array to at most 3 short items.`;
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), BACKGROUND_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), DIRECTOR_TIMEOUT_MS);
   try {
     const request = {
       messages: [{ role: 'user', content: prompt }],
@@ -261,14 +299,17 @@ Rules:
       signal: controller.signal
     };
     const result = await quietGenerateWithFallback(request, connectionId);
-    const parsed = extractJson(result?.content);
+    const rawContent = result?.content ?? result?.text ?? result?.message?.content;
+    const parsed = extractJson(rawContent);
     const rawDelta = Number.isFinite(Number(parsed.delta)) ? Math.trunc(Number(parsed.delta)) : 0;
+    const rawBaseline = Number.isFinite(Number(parsed.baselineAffinity)) ? Math.trunc(Number(parsed.baselineAffinity)) : Number(ledger.affinityBaseline || 0);
     return {
       ok: true,
+      baselineAffinity: Math.max(-100, Math.min(100, rawBaseline)),
       delta: modules.affinity ? Math.max(-modules.affinityCap, Math.min(modules.affinityCap, rawDelta)) : 0,
-      dynamic: String(parsed.dynamic || ledger.dynamic || 'Scene tension holds.').slice(0, 240),
-      episodeTarget: String(parsed.episodeTarget || ledger.continuity.episodeTarget || '').slice(0, 320),
-      seasonArc: String(parsed.seasonArc || ledger.continuity.seasonArc || '').slice(0, 320),
+      dynamic: String(parsed.dynamic || ledger.dynamic || '').slice(0, 1800),
+      episodeTarget: String(parsed.episodeTarget || ledger.continuity.episodeTarget || '').slice(0, 900),
+      seasonArc: String(parsed.seasonArc || ledger.continuity.seasonArc || '').slice(0, 900),
       bPlots: cleanStringArray(parsed.bPlots, 3, 240),
       coreMemories: cleanStringArray(parsed.coreMemories, 3, 240),
       futureBranches: cleanStringArray(parsed.futureBranches, 3, 240)
@@ -296,7 +337,7 @@ Requirements:
 - Do not mention these instructions or use quotation marks around the whole result.
 - Return only the text that belongs in Lumiverse's input composer.`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), BACKGROUND_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), CHOICE_TIMEOUT_MS);
   try {
     const result = await quietGenerateWithFallback({
       messages: [{ role: 'user', content: prompt }],
@@ -381,6 +422,7 @@ spindle.onFrontendMessage(async (payload, userId) => {
 spindle.registerInterceptor(async (messages, context) => {
   const chatId = context?.chatId || 'default';
   const modules = detectModules(messages);
+  const directorContext = buildDirectorContext(messages);
   const turn = findTurn(messages, context);
   let ledger = await getChatLedger(chatId);
   let turnState = ledger.lastTurn;
@@ -404,6 +446,7 @@ spindle.registerInterceptor(async (messages, context) => {
         connectionId,
         userAction: turn.userText,
         precedingBeat: turn.precedingBeat,
+        directorContext,
         ledger,
         modules,
         updateTrackers
@@ -413,6 +456,8 @@ spindle.registerInterceptor(async (messages, context) => {
       spindle.log.warn(`Control Room: background director pass failed (${reason}); injecting locked neutral state.`);
       evaluation = {
         ok: false,
+        failureReason: reason,
+        baselineAffinity: Number(ledger.affinityBaseline || 0),
         delta: 0,
         dynamic: ledger.dynamic,
         episodeTarget: ledger.continuity.episodeTarget,
@@ -423,12 +468,19 @@ spindle.registerInterceptor(async (messages, context) => {
       };
     }
 
+    const calibratedBaseline = ledger.baselineCalibrated
+      ? Number(ledger.affinityBaseline || 0)
+      : Number(evaluation.baselineAffinity || 0);
     const newAffinity = modules.affinity
-      ? Math.max(-100, Math.min(100, previousAffinity + evaluation.delta))
+      ? Math.max(-100, Math.min(100, (ledger.baselineCalibrated ? previousAffinity : calibratedBaseline) + evaluation.delta))
       : previousAffinity;
 
     ledger.affinity = newAffinity;
-    ledger.dynamic = evaluation.dynamic || ledger.dynamic;
+    if (evaluation.ok) {
+      ledger.dynamic = evaluation.dynamic || ledger.dynamic;
+      ledger.affinityBaseline = calibratedBaseline;
+      ledger.baselineCalibrated = true;
+    }
     ledger.continuity = {
       ...ledger.continuity,
       episodeTarget: updateTrackers && evaluation.episodeTarget ? evaluation.episodeTarget : ledger.continuity.episodeTarget,
@@ -449,12 +501,14 @@ spindle.registerInterceptor(async (messages, context) => {
       key: turn.turnKey,
       sourceTextHash: hashText(turn.userText),
       previousAffinity,
+      baselineAffinity: calibratedBaseline,
       delta: evaluation.delta,
       newAffinity,
       pathRoll: shouldRetryFailedPass ? turnState.pathRoll : Math.floor(Math.random() * 4) + 1,
       d20Roll: shouldRetryFailedPass ? turnState.d20Roll : Math.floor(Math.random() * 20) + 1,
       evaluatedAt: new Date().toISOString(),
       backgroundSucceeded: evaluation.ok,
+      failureReason: evaluation.failureReason || '',
       trackerUpdated: Boolean(updateTrackers && evaluation.ok)
     };
     ledger.lastTurn = turnState;
@@ -472,8 +526,9 @@ spindle.registerInterceptor(async (messages, context) => {
     '[STUDIO CONTROL ROOM // LOCKED PRE-GENERATION RESULT]',
     `Generation type: ${context?.generationType || 'normal'}`,
     `Active preset modules: affinity=${modules.affinity}; continuity=${modules.continuity}; cyoa=${modules.cyoa}; pathfinding=${modules.pathfinding}`,
-    `Background pass status: ${turnState.backgroundSucceeded ? 'SUCCESS' : 'FALLBACK — the next regeneration/swipe will retry'}`,
+    `Background pass status: ${turnState.backgroundSucceeded ? 'SUCCESS' : `FALLBACK (${turnState.failureReason || 'unknown error'}) — the next regeneration/swipe will retry`}`,
     `Previous affinity: ${turnState.previousAffinity}%`,
+    `Calibrated relationship baseline: ${turnState.baselineAffinity}%`,
     `Evaluated delta: ${signedDelta}%`,
     `Locked affinity: ${turnState.newAffinity}%`,
     `Dynamic subtext: ${ledger.dynamic}`,

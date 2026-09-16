@@ -1,5 +1,5 @@
 {
-  "version": "1.2.0",
+  "version": "1.3.0",
   "name": "Control Room: I Love TV!",
   "identifier": "lumiverse_control_room",
   "author": "angyaruo",
@@ -14,6 +14,6 @@
   ],
   "entry_backend": "dist/backend.js",
   "entry_frontend": "dist/frontend.js",
-  "interceptorTimeoutMs": 45000
+  "interceptorTimeoutMs": 60000
 }
 

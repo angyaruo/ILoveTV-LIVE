@@ -21,7 +21,9 @@ export function setup(ctx) {
   let generating = false;
   let choiceLoading = false;
   let pendingChoiceRequest = null;
+  let choiceTimeoutId = null;
   let positionFrame = null;
+  let widgetUserPositioned = false;
   const cleanups = [];
 
   const escapeHtml = (value = '') => String(value)
@@ -100,12 +102,18 @@ export function setup(ctx) {
     return generating || choiceLoading || state.choices.length > 0;
   }
 
-  function positionWidget() {
+  function positionWidget(force = false) {
     if (!widget) return;
     const composer = findComposer();
     const width = widgetExpanded ? Math.min(380, Math.max(280, window.innerWidth - 24)) : 58;
-    const height = widgetExpanded ? Math.min(430, Math.max(220, window.innerHeight - 140)) : 48;
+    const expandedHeight = choiceLoading
+      ? 156
+      : state.choices.length
+        ? Math.min(360, 102 + (state.choices.length * 58))
+        : 174;
+    const height = widgetExpanded ? expandedHeight : 48;
     widget.setSize(width, height);
+    if (widgetUserPositioned && !force) return;
     const rect = composer?.closest('[data-component="InputArea"]')?.getBoundingClientRect() || composer?.getBoundingClientRect();
     const x = rect ? Math.max(12, Math.min(window.innerWidth - width - 12, rect.right - width)) : Math.max(12, window.innerWidth - width - 24);
     const y = rect ? Math.max(12, rect.top - height - 10) : Math.max(12, window.innerHeight - height - 110);
@@ -130,6 +138,14 @@ export function setup(ctx) {
     }
     pendingChoiceRequest = crypto.randomUUID();
     choiceLoading = true;
+    if (choiceTimeoutId) clearTimeout(choiceTimeoutId);
+    choiceTimeoutId = setTimeout(() => {
+      if (!choiceLoading) return;
+      choiceLoading = false;
+      pendingChoiceRequest = null;
+      showToast('Choice writer timed out. Try again or switch the background connection.');
+      renderWidget();
+    }, 95000);
     renderWidget();
     ctx.sendToBackend({ type: 'control_room:expand_choice', chatId: state.chatId || undefined, requestId: pendingChoiceRequest, option: `[${choice.number}] ${choice.text}` });
   }
@@ -140,7 +156,7 @@ export function setup(ctx) {
     root.innerHTML = '';
     root.style.cssText = 'overflow:visible;font-family:inherit;color:var(--lumiverse-text,#eee)';
     const shell = document.createElement('div');
-    shell.style.cssText = `box-sizing:border-box;width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden;border:1px solid ${isLive() ? '#ff3b3b' : 'var(--lumiverse-border,#444)'};border-radius:12px;background:var(--lumiverse-fill-strong,#16161e);box-shadow:0 8px 28px rgba(0,0,0,.52)`;
+    shell.style.cssText = `box-sizing:border-box;width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden;border:1px solid ${isLive() ? '#ff3b3b' : '#51475f'};border-radius:12px;background:#17131f;color:#f4effb;box-shadow:0 10px 32px rgba(0,0,0,.72)`;
     const header = document.createElement('button');
     header.type = 'button';
     header.title = widgetExpanded ? 'Collapse Director’s Cut' : 'Open Director’s Cut';
@@ -153,7 +169,7 @@ export function setup(ctx) {
       const body = document.createElement('div');
       body.style.cssText = 'display:flex;flex:1;min-height:0;flex-direction:column;gap:8px;padding:0 10px 10px;overflow:auto';
       if (choiceLoading) {
-        body.innerHTML = '<div style="padding:18px 8px;text-align:center;font-size:12px;color:var(--lumiverse-primary,#8c82ff)">🎙️ Writing {{user}}’s take…</div>';
+        body.innerHTML = '<div style="padding:14px 8px;text-align:center;font-size:12px;color:#b99cff"><div style="font-weight:800;margin-bottom:9px">🎙️ Writing {{user}}’s take</div><div class="cr-writing-dots" aria-label="Generating"><i></i><i></i><i></i></div></div>';
       } else if (!state.choices.length) {
         body.innerHTML = `<div style="padding:18px 8px;text-align:center;font-size:12px;color:var(--lumiverse-text-dim,#999)">${generating ? 'Control Room is live. Waiting for the response…' : 'CYOA options will appear here after the next broadcast.'}</div>`;
       } else {
@@ -180,7 +196,7 @@ export function setup(ctx) {
       shell.appendChild(body);
     }
     const style = document.createElement('style');
-    style.textContent = '@keyframes cr-live-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.82)}}';
+    style.textContent = '@keyframes cr-live-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.82)}}@keyframes cr-dot{0%,80%,100%{transform:translateY(0);opacity:.35}40%{transform:translateY(-6px);opacity:1}}.cr-writing-dots{display:flex;justify-content:center;gap:6px}.cr-writing-dots i{width:7px;height:7px;border-radius:50%;background:#b99cff;animation:cr-dot 1.1s infinite ease-in-out}.cr-writing-dots i:nth-child(2){animation-delay:.14s}.cr-writing-dots i:nth-child(3){animation-delay:.28s}';
     root.append(style, shell);
     scheduleWidgetPosition();
   }
@@ -189,6 +205,7 @@ export function setup(ctx) {
     if (widget || !ctx.ui?.createFloatWidget) return;
     try {
       widget = ctx.ui.createFloatWidget({ width: 58, height: 48, initialPosition: { x: window.innerWidth - 82, y: window.innerHeight - 170 }, snapToEdge: false, tooltip: 'Director’s Cut', chromeless: true });
+      widget.onDragEnd?.(() => { widgetUserPositioned = true; });
       renderWidget();
     } catch (error) {
       showToast(`Director’s Cut widget unavailable: ${error?.message || 'ui_panels permission required'}`);
@@ -211,9 +228,9 @@ export function setup(ctx) {
       <div class="cr-grid">
         <div class="cr-row"><label class="cr-label">Background connection</label><select id="cr-connection" class="cr-input">${connectionOptions}</select></div>
         <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px"><div class="cr-card"><div class="cr-label">Affinity</div><div style="font:800 22px monospace">${Number(ledger.affinity) || 0}%</div></div><div class="cr-card"><div class="cr-label">Tracker cadence</div><div>Every <input id="cr-interval" type="number" min="1" max="10" value="${Number(settings.trackerInterval) || 1}" style="width:42px"> user turn(s)</div></div></div>
-        <div class="cr-card"><div class="cr-label">Dynamic subtext</div><div>${escapeHtml(ledger.dynamic || 'Neutral Ground')}</div></div>
-        <div class="cr-card"><div class="cr-label">Immediate episode target</div><div>${escapeHtml(continuity.episodeTarget || 'Awaiting tracker pass.')}</div></div>
-        <div class="cr-card"><div class="cr-label">Season arc</div><div>${escapeHtml(continuity.seasonArc || 'Awaiting tracker pass.')}</div></div>
+        <div class="cr-row"><label class="cr-label">Dynamic subtext</label><textarea id="cr-dynamic" class="cr-input" rows="5" placeholder="Awaiting the first successful relationship analysis…">${escapeHtml(ledger.dynamic || '')}</textarea><div class="cr-muted">Model-maintained Markdown relationship analysis; editable when you need to correct canon.</div></div>
+        <div class="cr-row"><label class="cr-label">Immediate episode target</label><textarea id="cr-target" class="cr-input" rows="3" placeholder="Awaiting the first successful short-term objective analysis…">${escapeHtml(continuity.episodeTarget || '')}</textarea></div>
+        <div class="cr-row"><label class="cr-label">Season arc</label><textarea id="cr-arc" class="cr-input" rows="3" placeholder="Awaiting the first successful long-term arc analysis…">${escapeHtml(continuity.seasonArc || '')}</textarea></div>
         <div class="cr-card"><div class="cr-label">B-plots & flags</div>${listHtml(continuity.bPlots, 'None captured yet.')}</div>
         <div class="cr-card"><div class="cr-label">Core memories</div>${listHtml(continuity.coreMemories, 'None captured yet.')}</div>
         <div class="cr-card"><div class="cr-label">Possible future branches</div>${listHtml(continuity.futureBranches, 'None captured yet.')}</div>
@@ -225,7 +242,17 @@ export function setup(ctx) {
     modal.root.querySelector('#cr-save').onclick = () => {
       const nextSettings = { expandChoices: modal.root.querySelector('#cr-expand').checked, trackerInterval: Math.max(1, Math.min(10, Number(modal.root.querySelector('#cr-interval').value || 1))) };
       state.ledger.settings = nextSettings;
-      saveLedger({ selectedConnection: modal.root.querySelector('#cr-connection').value, authorNote: modal.root.querySelector('#cr-note').value.trim(), settings: nextSettings });
+      saveLedger({
+        selectedConnection: modal.root.querySelector('#cr-connection').value,
+        authorNote: modal.root.querySelector('#cr-note').value.trim(),
+        dynamic: modal.root.querySelector('#cr-dynamic').value.trim(),
+        continuity: {
+          ...continuity,
+          episodeTarget: modal.root.querySelector('#cr-target').value.trim(),
+          seasonArc: modal.root.querySelector('#cr-arc').value.trim()
+        },
+        settings: nextSettings
+      });
       modal.root.querySelector('#cr-status').textContent = 'Saving…';
       renderWidget();
     };
@@ -250,12 +277,16 @@ export function setup(ctx) {
       if (payload.type === 'control_room:save_success') showToast('Control Room configuration saved.');
     }
     if (payload.type === 'control_room:choice_expanded' && payload.requestId === pendingChoiceRequest) {
+      if (choiceTimeoutId) clearTimeout(choiceTimeoutId);
+      choiceTimeoutId = null;
       choiceLoading = false;
       pendingChoiceRequest = null;
       if (insertIntoComposer(payload.text)) { state.choices = []; widgetExpanded = false; }
       renderWidget();
     }
     if (payload.type === 'control_room:choice_error' && payload.requestId === pendingChoiceRequest) {
+      if (choiceTimeoutId) clearTimeout(choiceTimeoutId);
+      choiceTimeoutId = null;
       choiceLoading = false;
       pendingChoiceRequest = null;
       showToast(`Choice writer failed: ${payload.error}`);
@@ -284,15 +315,12 @@ export function setup(ctx) {
   window.addEventListener('resize', resizeHandler);
   window.visualViewport?.addEventListener('resize', resizeHandler);
   cleanups.push(() => window.removeEventListener('resize', resizeHandler), () => window.visualViewport?.removeEventListener('resize', resizeHandler));
-  const observer = new MutationObserver(() => scheduleWidgetPosition());
-  observer.observe(document.body, { childList: true, subtree: true });
-  cleanups.push(() => observer.disconnect());
-
   ensureWidget();
   requestState();
   return () => {
     cleanups.reverse().forEach(cleanup => { try { cleanup?.(); } catch { /* best effort */ } });
     if (positionFrame) cancelAnimationFrame(positionFrame);
+    if (choiceTimeoutId) clearTimeout(choiceTimeoutId);
     widget?.destroy?.();
     modal?.dismiss?.();
     document.getElementById('cr-floating-toast')?.remove();
