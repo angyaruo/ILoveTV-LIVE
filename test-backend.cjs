@@ -39,12 +39,18 @@ const spindle = {
       assert.equal(request.userId, 'user-1');
       quietCalls += 1;
       if (request.messages[0].content.startsWith('Write a roleplay input')) {
-        return { content: 'I cross the room and offer a careful hello.' };
+        assert.equal(request.parameters.max_tokens, 1600);
+        return { content: [{ type: 'text', text: 'I cross the room and offer a careful hello.' }] };
       }
+      assert.equal(request.parameters.max_tokens, 2200);
+      assert.equal(request.tools[0].name, 'record_control_room_analysis');
       assert.match(request.messages[0].content, /LATEST USER ACTION:\nI offer her the key\./);
       assert.doesNotMatch(request.messages[0].content, /LATEST USER ACTION:\n<scripting_process>/);
       return {
-        content: JSON.stringify({
+        content: '',
+        reasoning: 'Private reasoning stays separate from the structured result.',
+        finish_reason: 'tool_calls',
+        tool_calls: [{ name: 'record_control_room_analysis', args: {
           baselineAffinity: 35,
           delta: 2,
           dynamic: 'Trust breaks through her caution.',
@@ -53,7 +59,7 @@ const spindle = {
           bPlots: ['The key may be counterfeit.'],
           coreMemories: ['The user offered her the vault key.'],
           futureBranches: ['She tests the key in secret.']
-        })
+        } }]
       };
     }
   },
