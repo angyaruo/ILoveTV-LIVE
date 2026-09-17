@@ -1,6 +1,8 @@
-// Control Room: I Love TV! — two-pass director engine
+// I Love TV! Suite — versioned preset, director, memory, and tools
 
-const ENGINE_VERSION = '1.5.0';
+import { PRESET_VERSIONS } from './preset-versions.js';
+
+const ENGINE_VERSION = '2.0.0';
 const DIRECTOR_TIMEOUT_MS = 90000;
 const CHOICE_TIMEOUT_MS = 120000;
 const MAX_LOG_ENTRIES = 30;
@@ -10,6 +12,7 @@ function defaultLedger() {
     affinity: 0,
     dynamic: '',
     continuity: {
+      runningSummary: '',
       seasonArc: '',
       episodeTarget: '',
       bPlots: [],
@@ -30,6 +33,72 @@ function defaultLedger() {
     lastTurn: null,
     lastActions: [`[${new Date().toLocaleTimeString()}] Control Room v${ENGINE_VERSION} initialized.`]
   };
+}
+
+function defaultSuiteConfig() {
+  return {
+    enabled: true,
+    selectedVersion: PRESET_VERSIONS[0]?.id || '3.5',
+    blockOverrides: {},
+    promptVariables: {},
+    rpgMode: false
+  };
+}
+
+function presetVersion(versionId) {
+  return PRESET_VERSIONS.find(version => version.id === versionId) || PRESET_VERSIONS[0];
+}
+
+function normalizeSuiteConfig(value) {
+  const base = defaultSuiteConfig();
+  const input = value && typeof value === 'object' ? value : {};
+  return {
+    ...base,
+    ...input,
+    selectedVersion: presetVersion(input.selectedVersion)?.id || base.selectedVersion,
+    blockOverrides: input.blockOverrides && typeof input.blockOverrides === 'object' ? input.blockOverrides : {},
+    promptVariables: input.promptVariables && typeof input.promptVariables === 'object' ? input.promptVariables : {},
+    rpgMode: input.rpgMode === true
+  };
+}
+
+async function getSuiteConfig(userId) {
+  try {
+    const raw = await spindle.userStorage.read('suite/config.json', userId);
+    return normalizeSuiteConfig(JSON.parse(raw));
+  } catch {
+    return defaultSuiteConfig();
+  }
+}
+
+async function saveSuiteConfig(config, userId) {
+  const normalized = normalizeSuiteConfig(config);
+  await spindle.userStorage.write('suite/config.json', JSON.stringify(normalized, null, 2), userId);
+  return normalized;
+}
+
+function resolvedSuiteBlocks(config) {
+  const version = presetVersion(config.selectedVersion);
+  const blocks = version.blocks.map(block => {
+    const override = config.blockOverrides?.[block.id] || {};
+    return { ...block, ...override, id: block.id, variables: block.variables || [] };
+  });
+  if (config.rpgMode) {
+    blocks.push({
+      id: 'suite-rpg-mode', name: '🎲 Suite RPG Mode', role: 'system', enabled: true,
+      position: 'post_history', depth: 0, marker: null,
+      content: '<suite_rpg_mode>Use the locked D20 action check supplied by the Control Room for uncertain actions. Track injuries, inventory, resources, conditions, and unresolved objectives consistently. Never reroll the locked check and never override character agency.</suite_rpg_mode>'
+    });
+  }
+  return blocks;
+}
+
+function suiteBlockSummaries(config) {
+  return resolvedSuiteBlocks(config).map(block => ({
+    id: block.id, name: block.name, enabled: block.enabled !== false, role: block.role,
+    position: block.position, marker: block.marker || null,
+    edited: Boolean(config.blockOverrides?.[block.id])
+  }));
 }
 
 function normalizeLedger(value) {
@@ -285,13 +354,14 @@ const DIRECTOR_TOOL = {
       baselineAffinity: { type: 'integer', minimum: -100, maximum: 100 },
       delta: { type: 'integer', minimum: -10, maximum: 10 },
       dynamic: { type: 'string' },
+      storySummary: { type: 'string' },
       episodeTarget: { type: 'string' },
       seasonArc: { type: 'string' },
       bPlots: { type: 'array', items: { type: 'string' }, maxItems: 3 },
       coreMemories: { type: 'array', items: { type: 'string' }, maxItems: 3 },
       futureBranches: { type: 'array', items: { type: 'string' }, maxItems: 3 }
     },
-    required: ['baselineAffinity', 'delta', 'dynamic', 'episodeTarget', 'seasonArc', 'bPlots', 'coreMemories', 'futureBranches']
+    required: ['baselineAffinity', 'delta', 'dynamic', 'storySummary', 'episodeTarget', 'seasonArc', 'bPlots', 'coreMemories', 'futureBranches']
   }
 };
 
@@ -351,7 +421,7 @@ LATEST USER ACTION:
 ${userAction.slice(-1800) || '(continue/regenerate without a new user action)'}
 
 Call the record_control_room_analysis tool exactly once with this shape (if tool calling is unavailable, return ONLY the equivalent JSON object):
-{"baselineAffinity":0,"delta":0,"dynamic":"markdown relationship analysis","episodeTarget":"short-term objective and user progress","seasonArc":"long-term mission and user progress","bPlots":["decision/flag and possible consequence"],"coreMemories":["character or NPC: psyche-shaping event"],"futureBranches":["predicted plausible branch"]}
+{"baselineAffinity":0,"delta":0,"dynamic":"markdown relationship analysis","storySummary":"dense continuity summary","episodeTarget":"short-term objective and user progress","seasonArc":"long-term mission and user progress","bPlots":["decision/flag and possible consequence"],"coreMemories":["character or NPC: psyche-shaping event"],"futureBranches":["predicted plausible branch"]}
 
 Rules:
 - This is an autonomous analytical pass. Do not leave fields generic, decorative, or unchanged merely because the latest action is subtle.
@@ -361,6 +431,7 @@ Rules:
 - The visible character response will be locked to this result: delta 0 at total affinity 0 means emotionally neutral behavior, not covertly positive behavior.
 - Judge the character-specific effect, not whether the writing is morally good.
 - dynamic is a concise but comprehensive Markdown relationship analysis. Cover {{char}} and each relevant NPC separately, explaining stance toward {{user}}, emotional pressure, trust/attraction/hostility, and the evidence behind it.
+- storySummary is a compact chronological summary of established events, decisions, revelations, state changes, and unresolved consequences. Preserve names and causality; omit decorative prose.
 - episodeTarget states the immediate short-term narrative objective and {{user}}'s current progress, preserving continuity while naming the next live possibility.
 - seasonArc states the overarching long-term mission/conflict and {{user}}'s progress toward or away from it.
 - bPlots stores consequential user decisions, unresolved details, promises, secrets, risks, and Chekhov flags that may resurface.
@@ -398,6 +469,7 @@ Rules:
       baselineAffinity: Math.max(-100, Math.min(100, rawBaseline)),
       delta: modules.affinity ? Math.max(-modules.affinityCap, Math.min(modules.affinityCap, rawDelta)) : 0,
       dynamic: String(parsed.dynamic || ledger.dynamic || '').slice(0, 1800),
+      storySummary: String(parsed.storySummary || ledger.continuity.runningSummary || '').slice(0, 4000),
       episodeTarget: String(parsed.episodeTarget || ledger.continuity.episodeTarget || '').slice(0, 900),
       seasonArc: String(parsed.seasonArc || ledger.continuity.seasonArc || '').slice(0, 900),
       bPlots: cleanStringArray(parsed.bPlots, 3, 240),
@@ -443,6 +515,27 @@ Requirements:
   }
 }
 
+async function runPromptWorkshop({ connectionId, userId, blockName, content, directions }) {
+  const prompt = `You are the prompt editor inside the I Love TV! Suite.
+
+BLOCK: ${String(blockName || 'New block').slice(0, 200)}
+CURRENT PROMPT:
+${String(content || '(write from scratch)').slice(0, 14000)}
+
+CREATOR DIRECTIONS:
+${String(directions || '').slice(0, 4000)}
+
+Rewrite the prompt so it is operationally precise, internally consistent, and easy for an LLM to follow. Preserve intentional macros such as {{user}}, {{char}}, and {{var::name}}, XML tags, and the preset's television-production voice unless the creator explicitly asks to change them. Return only the finished prompt block with no fence or commentary.`;
+  const result = await quietGenerateWithFallback({
+    messages: [{ role: 'user', content: prompt }],
+    parameters: { max_tokens: 3500, temperature: 0.45 },
+    reasoning: { source: 'off' }
+  }, connectionId, userId);
+  const text = generationText(result).trim();
+  if (!text) throw new Error(`prompt workshop returned empty text (${generationDiagnostic(result)})`);
+  return text;
+}
+
 function mergeUnique(existing, incoming, limit) {
   const values = [...(Array.isArray(existing) ? existing : []), ...(Array.isArray(incoming) ? incoming : [])];
   return [...new Set(values.map(value => String(value).trim()).filter(Boolean))].slice(-limit);
@@ -471,6 +564,7 @@ spindle.onFrontendMessage(async (payload, userId) => {
   if (!payload) return;
   const chatId = await resolveActiveChatId(payload.chatId, userId);
   let ledger = await getChatLedger(chatId, userId);
+  let suiteConfig = await getSuiteConfig(userId);
 
   if (payload.type === 'control_room:get_state') {
     let connections = [];
@@ -483,7 +577,65 @@ spindle.onFrontendMessage(async (payload, userId) => {
     } catch (error) {
       spindle.log.warn('Control Room: could not list connections', error?.message || error);
     }
-    sendFrontend({ type: 'control_room:state_data', chatId, ledger, connections }, userId);
+    sendFrontend({
+      type: 'control_room:state_data', chatId, ledger, connections,
+      suite: {
+        enabled: suiteConfig.enabled,
+        selectedVersion: suiteConfig.selectedVersion,
+        rpgMode: suiteConfig.rpgMode,
+        versions: PRESET_VERSIONS.map(version => ({ id: version.id, label: version.label, description: version.description, blockCount: version.blocks.length })),
+        blocks: suiteBlockSummaries(suiteConfig)
+      }
+    }, userId);
+  }
+
+  if (payload.type === 'suite:select_version' && payload.versionId) {
+    suiteConfig.selectedVersion = presetVersion(payload.versionId).id;
+    suiteConfig = await saveSuiteConfig(suiteConfig, userId);
+    sendFrontend({ type: 'suite:config_saved', suite: { ...suiteConfig, blocks: suiteBlockSummaries(suiteConfig) } }, userId);
+  }
+
+  if (payload.type === 'suite:save_settings') {
+    suiteConfig.enabled = payload.enabled !== false;
+    suiteConfig.rpgMode = payload.rpgMode === true;
+    suiteConfig = await saveSuiteConfig(suiteConfig, userId);
+    sendFrontend({ type: 'suite:config_saved', suite: { ...suiteConfig, blocks: suiteBlockSummaries(suiteConfig) } }, userId);
+  }
+
+  if (payload.type === 'suite:get_block' && payload.blockId) {
+    const block = resolvedSuiteBlocks(suiteConfig).find(item => item.id === payload.blockId);
+    if (block) sendFrontend({ type: 'suite:block_data', block }, userId);
+  }
+
+  if (payload.type === 'suite:save_block' && payload.blockId) {
+    const base = presetVersion(suiteConfig.selectedVersion).blocks.find(item => item.id === payload.blockId);
+    if (base) {
+      suiteConfig.blockOverrides[payload.blockId] = {
+        ...(suiteConfig.blockOverrides[payload.blockId] || {}),
+        ...(typeof payload.content === 'string' ? { content: payload.content } : {}),
+        ...(typeof payload.enabled === 'boolean' ? { enabled: payload.enabled } : {})
+      };
+      suiteConfig = await saveSuiteConfig(suiteConfig, userId);
+      sendFrontend({ type: 'suite:block_saved', block: resolvedSuiteBlocks(suiteConfig).find(item => item.id === payload.blockId), blocks: suiteBlockSummaries(suiteConfig) }, userId);
+    }
+  }
+
+  if (payload.type === 'suite:reset_block' && payload.blockId) {
+    delete suiteConfig.blockOverrides[payload.blockId];
+    suiteConfig = await saveSuiteConfig(suiteConfig, userId);
+    sendFrontend({ type: 'suite:block_saved', block: resolvedSuiteBlocks(suiteConfig).find(item => item.id === payload.blockId), blocks: suiteBlockSummaries(suiteConfig) }, userId);
+  }
+
+  if (payload.type === 'suite:rewrite_block' && payload.blockId) {
+    try {
+      const block = resolvedSuiteBlocks(suiteConfig).find(item => item.id === payload.blockId);
+      if (!block) throw new Error('Prompt block not found.');
+      const connectionId = await resolveConnectionId(ledger.selectedConnection, undefined, userId);
+      const content = await runPromptWorkshop({ connectionId, userId, blockName: block.name, content: payload.content ?? block.content, directions: payload.directions });
+      sendFrontend({ type: 'suite:rewrite_ready', requestId: payload.requestId, blockId: block.id, content }, userId);
+    } catch (error) {
+      sendFrontend({ type: 'suite:rewrite_error', requestId: payload.requestId, error: error?.message || 'Prompt rewrite failed.' }, userId);
+    }
   }
 
   if (payload.type === 'control_room:save_ledger' && payload.ledger) {
@@ -516,14 +668,35 @@ spindle.onFrontendMessage(async (payload, userId) => {
 spindle.registerInterceptor(async (messages, context) => {
   const chatId = context?.chatId || 'default';
   const userId = context?.userId;
-  const modules = detectModules(messages);
-  const directorContext = buildDirectorContext(messages);
-  const turn = findTurn(messages, context);
+  const suiteConfig = await getSuiteConfig(userId);
+  let workingMessages = messages;
+  let suiteAssemblySucceeded = false;
+  if (suiteConfig.enabled && chatId !== 'default') {
+    try {
+      const version = presetVersion(suiteConfig.selectedVersion);
+      const assembled = await spindle.generate.assemble({
+        blocks: resolvedSuiteBlocks(suiteConfig),
+        chatId,
+        connectionId: context?.connectionId,
+        generationType: context?.generationType,
+        promptVariables: { ...version.promptVariables, ...suiteConfig.promptVariables }
+      }, userId);
+      if (Array.isArray(assembled?.messages) && assembled.messages.length) {
+        workingMessages = assembled.messages;
+        suiteAssemblySucceeded = true;
+      }
+    } catch (error) {
+      spindle.log.warn(`I Love TV! Suite: bundled preset assembly failed (${error?.message || error}); retaining the host prompt.`);
+    }
+  }
+  const modules = detectModules(workingMessages);
+  const directorContext = buildDirectorContext(workingMessages);
+  const turn = findTurn(workingMessages, context);
   let ledger = await getChatLedger(chatId, userId);
   let turnState = ledger.lastTurn;
 
   const hasActiveWork = modules.affinity || modules.continuity || modules.pathfinding || modules.cyoa || Boolean(ledger.authorNote);
-  if (!hasActiveWork) return messages;
+  if (!hasActiveWork) return workingMessages;
 
   // A regenerate, continue, or new swipe for the same source user message reuses
   // the first evaluation and dice. It must not compound affinity or reroll fate.
@@ -556,6 +729,7 @@ spindle.registerInterceptor(async (messages, context) => {
         baselineAffinity: Number(ledger.affinityBaseline || 0),
         delta: 0,
         dynamic: ledger.dynamic,
+        storySummary: ledger.continuity.runningSummary,
         episodeTarget: ledger.continuity.episodeTarget,
         seasonArc: ledger.continuity.seasonArc,
         bPlots: ledger.continuity.bPlots,
@@ -580,6 +754,7 @@ spindle.registerInterceptor(async (messages, context) => {
     ledger.continuity = {
       ...ledger.continuity,
       episodeTarget: updateTrackers && evaluation.episodeTarget ? evaluation.episodeTarget : ledger.continuity.episodeTarget,
+      runningSummary: updateTrackers && evaluation.storySummary ? evaluation.storySummary : ledger.continuity.runningSummary,
       seasonArc: updateTrackers && evaluation.seasonArc ? evaluation.seasonArc : ledger.continuity.seasonArc,
       bPlots: updateTrackers && evaluation.bPlots?.length ? evaluation.bPlots : ledger.continuity.bPlots,
       coreMemories: updateTrackers ? mergeUnique(ledger.continuity.coreMemories, evaluation.coreMemories, 12) : ledger.continuity.coreMemories,
@@ -620,6 +795,7 @@ spindle.registerInterceptor(async (messages, context) => {
   const lines = [
     '<control_room_ledger priority="CRITICAL">',
     '[STUDIO CONTROL ROOM // LOCKED PRE-GENERATION RESULT]',
+    `Suite preset: ${presetVersion(suiteConfig.selectedVersion).label} (${suiteAssemblySucceeded ? 'assembled by extension' : 'host prompt fallback'})`,
     `Generation type: ${context?.generationType || 'normal'}`,
     `Active preset modules: affinity=${modules.affinity}; continuity=${modules.continuity}; cyoa=${modules.cyoa}; pathfinding=${modules.pathfinding}`,
     `Background pass status: ${turnState.backgroundSucceeded ? 'SUCCESS' : `FALLBACK (${turnState.failureReason || 'unknown error'}) — the next regeneration/swipe will retry`}`,
@@ -634,6 +810,7 @@ spindle.registerInterceptor(async (messages, context) => {
   ];
 
   if (modules.continuity) {
+    lines.push(`Running story summary: ${ledger.continuity.runningSummary || '(awaiting first tracker pass)'}`);
     lines.push(`Season arc: ${ledger.continuity.seasonArc}`);
     lines.push(`B-plots / flags: ${(ledger.continuity.bPlots || []).join(' | ') || '(none yet)'}`);
     lines.push(`Core memories: ${(ledger.continuity.coreMemories || []).join(' | ') || '(none yet)'}`);
@@ -648,16 +825,16 @@ spindle.registerInterceptor(async (messages, context) => {
   lines.push('</control_room_ledger>');
 
   const injected = { role: 'system', content: lines.join('\n') };
-  const modified = [...messages];
+  const modified = [...workingMessages];
   const insertAt = Math.min(Math.max(turn.insertAt, 0), modified.length);
   modified.splice(insertAt, 0, injected);
 
   sendFrontend({ type: 'control_room:state_data', chatId, ledger }, userId);
   return {
     messages: modified,
-    breakdown: [{ messageIndex: insertAt, name: 'Control Room — Locked Director Pass' }]
+    breakdown: [{ messageIndex: insertAt, name: `I Love TV! Suite ${presetVersion(suiteConfig.selectedVersion).id} — Director Pass` }]
   };
 }, 10);
 
-spindle.log.info(`Control Room: Two-Pass Director Engine v${ENGINE_VERSION} initialized.`);
+spindle.log.info(`I Love TV! Suite v${ENGINE_VERSION} initialized with ${PRESET_VERSIONS.length} bundled preset version(s).`);
 

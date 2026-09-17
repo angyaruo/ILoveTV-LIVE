@@ -7,6 +7,7 @@ const files = new Map();
 let interceptor;
 let frontendHandler;
 let quietCalls = 0;
+let assembleCalls = 0;
 const frontendMessages = [];
 
 const spindle = {
@@ -35,6 +36,12 @@ const spindle = {
     }
   },
   generate: {
+    async assemble(request, userId) {
+      assert.equal(userId, 'user-1');
+      assert.equal(request.blocks.length >= 84, true);
+      assembleCalls += 1;
+      return { messages };
+    },
     async quiet(request) {
       assert.equal(request.userId, 'user-1');
       quietCalls += 1;
@@ -54,6 +61,7 @@ const spindle = {
           baselineAffinity: 35,
           delta: 2,
           dynamic: 'Trust breaks through her caution.',
+          storySummary: 'At the vault, the user offered her the key.',
           episodeTarget: 'Decide whether to open the vault.',
           seasonArc: 'The rivals learn to cooperate.',
           bPlots: ['The key may be counterfeit.'],
@@ -78,8 +86,9 @@ const spindle = {
   log: { info() {}, warn() {}, error() {} }
 };
 
-const source = fs.readFileSync(path.join(__dirname, 'dist/backend.js'), 'utf8');
-vm.runInNewContext(source, { spindle, console, setTimeout, clearTimeout, AbortController, Date, JSON, Math });
+const presets = fs.readFileSync(path.join(__dirname, 'dist/preset-versions.js'), 'utf8').replace('export const PRESET_VERSIONS', 'const PRESET_VERSIONS');
+const source = fs.readFileSync(path.join(__dirname, 'dist/backend.js'), 'utf8').replace(/^import .*preset-versions.*;\r?\n/m, '');
+vm.runInNewContext(`${presets}\n${source}`, { spindle, console, setTimeout, clearTimeout, AbortController, Date, JSON, Math });
 
 assert.equal(typeof interceptor, 'function');
 
@@ -94,11 +103,13 @@ const messages = [
 (async () => {
   const first = await interceptor(messages, { chatId: 'chat-1', connectionId: 'conn-1', generationType: 'normal', userId: 'user-1' });
   assert.equal(quietCalls, 1);
-  assert.equal(first.breakdown[0].name, 'Control Room — Locked Director Pass');
+  assert.equal(assembleCalls, 1);
+  assert.equal(first.breakdown[0].name, 'I Love TV! Suite 3.5 — Director Pass');
   const injected = first.messages[first.breakdown[0].messageIndex].content;
   assert.match(injected, /Calibrated relationship baseline: 35%/);
   assert.match(injected, /Locked affinity: 37%/);
   assert.match(injected, /Core memories: The user offered her the vault key\./);
+  assert.match(injected, /Running story summary: At the vault, the user offered her the key\./);
   const pathRoll = injected.match(/LOCKED PATHFINDER ROLL: (\d)\/4/)[1];
 
   const second = await interceptor(messages, { chatId: 'chat-1', connectionId: 'conn-1', generationType: 'regenerate', userId: 'user-1' });

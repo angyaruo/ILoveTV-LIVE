@@ -17,6 +17,7 @@ const spindle = {
   },
   connections: { async list(userId) { assert.equal(userId, 'user-1'); return { data: [{ id: 'conn-1', is_default: true }] }; } },
   generate: {
+    async assemble(request, userId) { assert.equal(userId, 'user-1'); return { messages }; },
     async quiet(request) {
       assert.equal(request.userId, 'user-1');
       calls += 1;
@@ -30,7 +31,9 @@ const spindle = {
   log: { info() {}, warn() {}, error() {} }
 };
 
-vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'dist/backend.js'), 'utf8'), { spindle, console, setTimeout, clearTimeout, AbortController, Date, JSON, Math });
+const presets = fs.readFileSync(path.join(__dirname, 'dist/preset-versions.js'), 'utf8').replace('export const PRESET_VERSIONS', 'const PRESET_VERSIONS');
+const backend = fs.readFileSync(path.join(__dirname, 'dist/backend.js'), 'utf8').replace(/^import .*preset-versions.*;\r?\n/m, '');
+vm.runInNewContext(`${presets}\n${backend}`, { spindle, console, setTimeout, clearTimeout, AbortController, Date, JSON, Math });
 const messages = [
   { role: 'system', content: '<co_star_chemistry>Pacing Cap: Maximum ±2% shift</co_star_chemistry> Heartthrob Mode: Fatal Attraction' },
   { role: 'assistant', content: 'She waits by the door.', __isChatHistory: true, sourceMessageId: 'a1', sourceIndexInChat: 1 },
