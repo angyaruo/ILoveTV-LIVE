@@ -118,16 +118,36 @@ const messages = [
   assert.match(injectedAgain, new RegExp(`LOCKED PATHFINDER ROLL: ${pathRoll}/4`));
   assert.match(injectedAgain, /Locked affinity: 37%/);
 
+  const swipe = await interceptor(messages, { chatId: 'chat-1', connectionId: 'conn-1', generationType: 'swipe', userId: 'user-1' });
+  assert.equal(quietCalls, 2, 'every swipe must run a fresh background pass');
+  const injectedSwipe = swipe.messages[swipe.breakdown[0].messageIndex].content;
+  assert.match(injectedSwipe, /Generation type: swipe/);
+  assert.match(injectedSwipe, /Locked affinity: 39%/);
+
   const saved = JSON.parse(files.get('ledgers/chat-1.json'));
-  assert.equal(saved.affinity, 37);
+  assert.equal(saved.affinity, 39);
   assert.equal(saved.baselineCalibrated, true);
   assert.equal(saved.continuity.coreMemories.length, 1);
   await frontendHandler({ type: 'control_room:save_ledger', chatId: 'chat-1', ledger: { authorNote: 'Keep the mystery unresolved.' } }, 'user-1');
   const savedAfterConfig = JSON.parse(files.get('ledgers/chat-1.json'));
   assert.equal(savedAfterConfig.authorNote, 'Keep the mystery unresolved.');
   assert.equal(savedAfterConfig.lastActions.some(line => /manual override/i.test(line)), false);
+  await frontendHandler({ type: 'control_room:get_state', chatId: 'chat-1' }, 'user-1');
+  const state = frontendMessages.at(-1);
+  assert.equal(state.suite.variables.length > 0, true);
+  const variableGroup = state.suite.variables[0];
+  const variable = variableGroup.variables[0];
+  await frontendHandler({ type: 'suite:save_variable', chatId: 'chat-1', blockId: variableGroup.blockId, name: variable.name, value: variable.value }, 'user-1');
+  const configured = JSON.parse(files.get('suite/config.json'));
+  assert.equal(configured.promptVariables[variableGroup.blockId][variable.name], variable.value);
+  await frontendHandler({ type: 'suite:create_block', chatId: 'chat-1', kind: 'category', name: 'Test Category' }, 'user-1');
+  const created = frontendMessages.at(-1);
+  assert.equal(created.type, 'suite:block_saved');
+  assert.equal(created.block.marker, 'category');
+  await frontendHandler({ type: 'suite:archive_block', chatId: 'chat-1', blockId: created.block.id }, 'user-1');
+  assert.equal(frontendMessages.at(-1).suite.archives.length, 1);
   await frontendHandler({ type: 'control_room:expand_choice', chatId: 'chat-1', requestId: 'choice-1', option: '[1] Walk over and say hi' }, 'user-1');
-  assert.equal(quietCalls, 2);
+  assert.equal(quietCalls, 3);
   assert.equal(frontendMessages.at(-1).type, 'control_room:choice_expanded');
   assert.equal(frontendMessages.at(-1).text, 'I cross the room and offer a careful hello.');
   console.log('backend-behavior-ok');
