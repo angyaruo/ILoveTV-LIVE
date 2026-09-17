@@ -1,11 +1,11 @@
 {
-  "version": "1.5.0",
-  "name": "Control Room: I Love TV!",
+  "version": "2.0.0",
+  "name": "I Love TV! Suite",
   "identifier": "lumiverse_control_room",
   "author": "angyaruo",
   "github": "https://github.com/angyaruo/Mr-TVs-TelePrompter",
   "homepage": "https://github.com/angyaruo/Mr-TVs-TelePrompter",
-  "description": "Two-pass background director, per-chat continuity ledger, locked dice, affinity tracking, CYOA helpers, and author notes for the I Love TV! preset.",
+  "description": "A self-contained, versioned I Love TV! roleplay suite with prompt editing, AI workshop, director tracking, memory, CYOA, and RPG tools.",
   "permissions": [
     "generation",
     "interceptor",
