@@ -1,9 +1,9 @@
 {
   "name": "lumiverse-control-room",
-  "version": "1.5.0",
+  "version": "2.0.0",
   "type": "module",
   "main": "dist/backend.js",
   "module": "dist/backend.js",
-  "description": "Two-pass director, continuity ledger, locked rolls, CYOA helpers, and author notes for the I Love TV! preset"
+  "description": "Versioned I Love TV! prompt suite, director, continuity memory, CYOA, RPG tools, and prompt workshop"
 }
 
