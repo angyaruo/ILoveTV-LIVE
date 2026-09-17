@@ -45,7 +45,7 @@ const messages = [
   const firstText = first.messages[first.breakdown[0].messageIndex].content;
   assert.match(firstText, /FALLBACK/);
   const roll = firstText.match(/LOCKED PATHFINDER ROLL: (\d)\/4/)[1];
-  const second = await interceptor(messages, { chatId: 'chat-1', generationType: 'swipe', userId: 'user-1' });
+  const second = await interceptor(messages, { chatId: 'chat-1', generationType: 'regenerate', userId: 'user-1' });
   const secondText = second.messages[second.breakdown[0].messageIndex].content;
   assert.equal(calls, 2, 'failed pass must retry on the same source turn');
   assert.match(secondText, /Background pass status: SUCCESS/);
