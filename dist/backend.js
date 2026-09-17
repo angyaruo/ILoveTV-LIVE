@@ -2,7 +2,7 @@
 
 import { PRESET_VERSIONS } from './preset-versions.js';
 
-const ENGINE_VERSION = '2.1.0';
+const ENGINE_VERSION = '2.1.1';
 const DIRECTOR_TIMEOUT_MS = 90000;
 const CHOICE_TIMEOUT_MS = 120000;
 const MAX_LOG_ENTRIES = 30;

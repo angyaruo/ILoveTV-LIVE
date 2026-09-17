@@ -2,6 +2,8 @@
 
 Version 2.1 turns the suite workspace into an Art Deco broadcast console and expands the bundled preset editor.
 
+Version 2.1.1 adds a dedicated luxury-lobby landing page, an animated collapsing navigation rail, softer contemporary card geometry, and highlighted state controls in place of raw checkboxes.
+
 - Code-native SVG icons replace decorative emoji throughout the interface.
 - All Lumiverse prompt variables exposed by the bundled preset can be configured from the Preset tab.
 - Categories, markers, and prompt blocks are visually distinct and can be reordered by dragging.
@@ -42,5 +44,6 @@ node --check dist/backend.js
 node --check dist/frontend.js
 node test-backend.cjs
 node test-retry.cjs
+node test-frontend.cjs
 ```
 
