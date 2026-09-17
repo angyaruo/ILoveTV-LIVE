@@ -1,5 +1,13 @@
 # I Love TV! Suite
 
+Version 2.1 turns the suite workspace into an Art Deco broadcast console and expands the bundled preset editor.
+
+- Code-native SVG icons replace decorative emoji throughout the interface.
+- All Lumiverse prompt variables exposed by the bundled preset can be configured from the Preset tab.
+- Categories, markers, and prompt blocks are visually distinct and can be reordered by dragging.
+- Create, duplicate, internally copy/paste, edit, reset, and archive prompt structures. Archiving stores a restorable snapshot and leaves the active block in place.
+- Every swipe is an alternate take with a fresh director pass, affinity delta, D4, D20, subtext, and tracker evaluation. Regenerate still preserves the locked result for the same take.
+
 A self-contained Lumiverse Spindle roleplay suite. Version 2 bundles the I Love TV! prompt package, assembles it independently of the active Lumiverse preset, and combines it with the Control Room director, affinity, continuity memory, locked checks, CYOA writing, RPG mode, and an AI prompt workshop.
 
 ## Suite workspace

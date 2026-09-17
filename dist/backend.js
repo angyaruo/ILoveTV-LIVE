@@ -2,7 +2,7 @@
 
 import { PRESET_VERSIONS } from './preset-versions.js';
 
-const ENGINE_VERSION = '2.0.0';
+const ENGINE_VERSION = '2.1.0';
 const DIRECTOR_TIMEOUT_MS = 90000;
 const CHOICE_TIMEOUT_MS = 120000;
 const MAX_LOG_ENTRIES = 30;
@@ -41,6 +41,9 @@ function defaultSuiteConfig() {
     selectedVersion: PRESET_VERSIONS[0]?.id || '3.5',
     blockOverrides: {},
     promptVariables: {},
+    blockOrder: [],
+    customBlocks: [],
+    archivedBlocks: [],
     rpgMode: false
   };
 }
@@ -58,6 +61,9 @@ function normalizeSuiteConfig(value) {
     selectedVersion: presetVersion(input.selectedVersion)?.id || base.selectedVersion,
     blockOverrides: input.blockOverrides && typeof input.blockOverrides === 'object' ? input.blockOverrides : {},
     promptVariables: input.promptVariables && typeof input.promptVariables === 'object' ? input.promptVariables : {},
+    blockOrder: Array.isArray(input.blockOrder) ? input.blockOrder.map(String) : [],
+    customBlocks: Array.isArray(input.customBlocks) ? input.customBlocks.filter(block => block && typeof block === 'object' && block.id) : [],
+    archivedBlocks: Array.isArray(input.archivedBlocks) ? input.archivedBlocks.filter(item => item && typeof item === 'object' && item.block).slice(-100) : [],
     rpgMode: input.rpgMode === true
   };
 }
@@ -79,10 +85,18 @@ async function saveSuiteConfig(config, userId) {
 
 function resolvedSuiteBlocks(config) {
   const version = presetVersion(config.selectedVersion);
-  const blocks = version.blocks.map(block => {
+  let blocks = version.blocks.map(block => {
     const override = config.blockOverrides?.[block.id] || {};
     return { ...block, ...override, id: block.id, variables: block.variables || [] };
   });
+  blocks.push(...config.customBlocks.map(block => ({ ...block, variables: block.variables || [] })));
+  if (config.blockOrder.length) {
+    const rank = new Map(config.blockOrder.map((id, index) => [id, index]));
+    blocks = blocks
+      .map((block, sourceIndex) => ({ block, sourceIndex }))
+      .sort((a, b) => (rank.get(a.block.id) ?? (config.blockOrder.length + a.sourceIndex)) - (rank.get(b.block.id) ?? (config.blockOrder.length + b.sourceIndex)))
+      .map(item => item.block);
+  }
   if (config.rpgMode) {
     blocks.push({
       id: 'suite-rpg-mode', name: '🎲 Suite RPG Mode', role: 'system', enabled: true,
@@ -96,9 +110,60 @@ function resolvedSuiteBlocks(config) {
 function suiteBlockSummaries(config) {
   return resolvedSuiteBlocks(config).map(block => ({
     id: block.id, name: block.name, enabled: block.enabled !== false, role: block.role,
-    position: block.position, marker: block.marker || null,
+    position: block.position, depth: Number(block.depth || 0), marker: block.marker || null,
+    categoryMode: block.categoryMode || null, group: block.group || null,
+    kind: block.marker === 'category' ? 'category' : (block.marker ? 'marker' : 'block'),
+    custom: config.customBlocks.some(item => item.id === block.id),
     edited: Boolean(config.blockOverrides?.[block.id])
   }));
+}
+
+function suiteVariables(config) {
+  const version = presetVersion(config.selectedVersion);
+  return resolvedSuiteBlocks(config)
+    .filter(block => Array.isArray(block.variables) && block.variables.length)
+    .map(block => ({
+      blockId: block.id,
+      blockName: block.name,
+      variables: block.variables.map(variable => ({
+        ...variable,
+        value: config.promptVariables?.[block.id]?.[variable.name]
+          ?? version.promptVariables?.[block.id]?.[variable.name]
+          ?? variable.defaultValue
+      }))
+    }));
+}
+
+function effectivePromptVariables(config) {
+  const defaults = presetVersion(config.selectedVersion).promptVariables || {};
+  const merged = { ...defaults };
+  for (const [blockId, values] of Object.entries(config.promptVariables || {})) {
+    merged[blockId] = { ...(defaults[blockId] || {}), ...(values && typeof values === 'object' ? values : {}) };
+  }
+  return merged;
+}
+
+function suiteState(config) {
+  return {
+    enabled: config.enabled,
+    selectedVersion: config.selectedVersion,
+    rpgMode: config.rpgMode,
+    versions: PRESET_VERSIONS.map(version => ({ id: version.id, label: version.label, description: version.description, blockCount: version.blocks.length })),
+    blocks: suiteBlockSummaries(config),
+    variables: suiteVariables(config),
+    archives: config.archivedBlocks.map(item => ({ archiveId: item.archiveId, sourceBlockId: item.sourceBlockId, archivedAt: item.archivedAt, name: item.block?.name || 'Archived block' }))
+  };
+}
+
+function uniqueBlockId(prefix = 'block') {
+  return `suite-${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function insertAfter(order, newId, afterId) {
+  const result = order.filter(id => id !== newId);
+  const index = afterId ? result.indexOf(afterId) : -1;
+  result.splice(index >= 0 ? index + 1 : result.length, 0, newId);
+  return result;
 }
 
 function normalizeLedger(value) {
@@ -579,27 +644,30 @@ spindle.onFrontendMessage(async (payload, userId) => {
     }
     sendFrontend({
       type: 'control_room:state_data', chatId, ledger, connections,
-      suite: {
-        enabled: suiteConfig.enabled,
-        selectedVersion: suiteConfig.selectedVersion,
-        rpgMode: suiteConfig.rpgMode,
-        versions: PRESET_VERSIONS.map(version => ({ id: version.id, label: version.label, description: version.description, blockCount: version.blocks.length })),
-        blocks: suiteBlockSummaries(suiteConfig)
-      }
+      suite: suiteState(suiteConfig)
     }, userId);
   }
 
   if (payload.type === 'suite:select_version' && payload.versionId) {
     suiteConfig.selectedVersion = presetVersion(payload.versionId).id;
     suiteConfig = await saveSuiteConfig(suiteConfig, userId);
-    sendFrontend({ type: 'suite:config_saved', suite: { ...suiteConfig, blocks: suiteBlockSummaries(suiteConfig) } }, userId);
+    sendFrontend({ type: 'suite:config_saved', suite: suiteState(suiteConfig) }, userId);
   }
 
   if (payload.type === 'suite:save_settings') {
     suiteConfig.enabled = payload.enabled !== false;
     suiteConfig.rpgMode = payload.rpgMode === true;
     suiteConfig = await saveSuiteConfig(suiteConfig, userId);
-    sendFrontend({ type: 'suite:config_saved', suite: { ...suiteConfig, blocks: suiteBlockSummaries(suiteConfig) } }, userId);
+    sendFrontend({ type: 'suite:config_saved', suite: suiteState(suiteConfig) }, userId);
+  }
+
+  if (payload.type === 'suite:save_variable' && payload.blockId && payload.name) {
+    suiteConfig.promptVariables[payload.blockId] = {
+      ...(suiteConfig.promptVariables[payload.blockId] || {}),
+      [payload.name]: payload.value
+    };
+    suiteConfig = await saveSuiteConfig(suiteConfig, userId);
+    sendFrontend({ type: 'suite:config_saved', suite: suiteState(suiteConfig) }, userId);
   }
 
   if (payload.type === 'suite:get_block' && payload.blockId) {
@@ -609,21 +677,85 @@ spindle.onFrontendMessage(async (payload, userId) => {
 
   if (payload.type === 'suite:save_block' && payload.blockId) {
     const base = presetVersion(suiteConfig.selectedVersion).blocks.find(item => item.id === payload.blockId);
+    const editable = ['name', 'content', 'enabled', 'role', 'position', 'depth', 'marker', 'categoryMode', 'group'];
+    const changes = Object.fromEntries(editable.filter(key => payload[key] !== undefined).map(key => [key, payload[key]]));
     if (base) {
       suiteConfig.blockOverrides[payload.blockId] = {
         ...(suiteConfig.blockOverrides[payload.blockId] || {}),
-        ...(typeof payload.content === 'string' ? { content: payload.content } : {}),
-        ...(typeof payload.enabled === 'boolean' ? { enabled: payload.enabled } : {})
+        ...changes
       };
-      suiteConfig = await saveSuiteConfig(suiteConfig, userId);
-      sendFrontend({ type: 'suite:block_saved', block: resolvedSuiteBlocks(suiteConfig).find(item => item.id === payload.blockId), blocks: suiteBlockSummaries(suiteConfig) }, userId);
+    } else {
+      const index = suiteConfig.customBlocks.findIndex(item => item.id === payload.blockId);
+      if (index >= 0) suiteConfig.customBlocks[index] = { ...suiteConfig.customBlocks[index], ...changes, id: payload.blockId };
     }
+    suiteConfig = await saveSuiteConfig(suiteConfig, userId);
+    sendFrontend({ type: 'suite:block_saved', block: resolvedSuiteBlocks(suiteConfig).find(item => item.id === payload.blockId), suite: suiteState(suiteConfig) }, userId);
   }
 
   if (payload.type === 'suite:reset_block' && payload.blockId) {
     delete suiteConfig.blockOverrides[payload.blockId];
     suiteConfig = await saveSuiteConfig(suiteConfig, userId);
-    sendFrontend({ type: 'suite:block_saved', block: resolvedSuiteBlocks(suiteConfig).find(item => item.id === payload.blockId), blocks: suiteBlockSummaries(suiteConfig) }, userId);
+    const block = resolvedSuiteBlocks(suiteConfig).find(item => item.id === payload.blockId);
+    if (block) sendFrontend({ type: 'suite:block_saved', block, suite: suiteState(suiteConfig) }, userId);
+  }
+
+  if (payload.type === 'suite:create_block') {
+    const kind = ['category', 'marker'].includes(payload.kind) ? payload.kind : 'block';
+    const id = uniqueBlockId(kind);
+    const block = {
+      id,
+      name: String(payload.name || (kind === 'category' ? 'New Category' : kind === 'marker' ? 'New Marker' : 'New Prompt Block')).slice(0, 120),
+      content: typeof payload.content === 'string' ? payload.content : '',
+      role: payload.role || 'system', enabled: payload.enabled !== false,
+      position: payload.position || 'pre_history', depth: Number(payload.depth || 0),
+      marker: kind === 'category' ? 'category' : (kind === 'marker' ? (payload.marker || 'main_prompt') : null),
+      categoryMode: payload.categoryMode || null, group: payload.group || null,
+      variables: Array.isArray(payload.variables) ? payload.variables : []
+    };
+    suiteConfig.customBlocks.push(block);
+    const currentOrder = suiteBlockSummaries(suiteConfig).map(item => item.id).filter(item => item !== id);
+    suiteConfig.blockOrder = insertAfter(currentOrder, id, payload.afterId);
+    suiteConfig = await saveSuiteConfig(suiteConfig, userId);
+    sendFrontend({ type: 'suite:block_saved', block, suite: suiteState(suiteConfig) }, userId);
+  }
+
+  if (payload.type === 'suite:duplicate_block' && payload.blockId) {
+    const source = resolvedSuiteBlocks(suiteConfig).find(item => item.id === payload.blockId);
+    if (source) {
+      const copy = { ...source, id: uniqueBlockId('copy'), name: `${source.name} — Copy`, variables: Array.isArray(source.variables) ? source.variables.map(item => ({ ...item })) : [] };
+      suiteConfig.customBlocks.push(copy);
+      suiteConfig.blockOrder = insertAfter(suiteBlockSummaries(suiteConfig).map(item => item.id).filter(id => id !== copy.id), copy.id, source.id);
+      suiteConfig = await saveSuiteConfig(suiteConfig, userId);
+      sendFrontend({ type: 'suite:block_saved', block: copy, suite: suiteState(suiteConfig) }, userId);
+    }
+  }
+
+  if (payload.type === 'suite:reorder_blocks' && Array.isArray(payload.order)) {
+    const known = suiteBlockSummaries(suiteConfig).map(item => item.id);
+    const requested = payload.order.map(String).filter((id, index, all) => known.includes(id) && all.indexOf(id) === index);
+    suiteConfig.blockOrder = [...requested, ...known.filter(id => !requested.includes(id))];
+    suiteConfig = await saveSuiteConfig(suiteConfig, userId);
+    sendFrontend({ type: 'suite:config_saved', suite: suiteState(suiteConfig) }, userId);
+  }
+
+  if (payload.type === 'suite:archive_block' && payload.blockId) {
+    const block = resolvedSuiteBlocks(suiteConfig).find(item => item.id === payload.blockId);
+    if (block) {
+      suiteConfig.archivedBlocks.push({ archiveId: uniqueBlockId('archive'), sourceBlockId: block.id, archivedAt: new Date().toISOString(), block: { ...block } });
+      suiteConfig = await saveSuiteConfig(suiteConfig, userId);
+      sendFrontend({ type: 'suite:config_saved', suite: suiteState(suiteConfig) }, userId);
+    }
+  }
+
+  if (payload.type === 'suite:restore_archive' && payload.archiveId) {
+    const archived = suiteConfig.archivedBlocks.find(item => item.archiveId === payload.archiveId);
+    if (archived) {
+      const block = { ...archived.block, id: uniqueBlockId('restored'), name: `${archived.block.name} — Restored` };
+      suiteConfig.customBlocks.push(block);
+      suiteConfig.blockOrder = [...suiteBlockSummaries(suiteConfig).map(item => item.id).filter(id => id !== block.id), block.id];
+      suiteConfig = await saveSuiteConfig(suiteConfig, userId);
+      sendFrontend({ type: 'suite:block_saved', block, suite: suiteState(suiteConfig) }, userId);
+    }
   }
 
   if (payload.type === 'suite:rewrite_block' && payload.blockId) {
@@ -679,7 +811,7 @@ spindle.registerInterceptor(async (messages, context) => {
         chatId,
         connectionId: context?.connectionId,
         generationType: context?.generationType,
-        promptVariables: { ...version.promptVariables, ...suiteConfig.promptVariables }
+        promptVariables: effectivePromptVariables(suiteConfig)
       }, userId);
       if (Array.isArray(assembled?.messages) && assembled.messages.length) {
         workingMessages = assembled.messages;
@@ -698,9 +830,11 @@ spindle.registerInterceptor(async (messages, context) => {
   const hasActiveWork = modules.affinity || modules.continuity || modules.pathfinding || modules.cyoa || Boolean(ledger.authorNote);
   if (!hasActiveWork) return workingMessages;
 
-  // A regenerate, continue, or new swipe for the same source user message reuses
-  // the first evaluation and dice. It must not compound affinity or reroll fate.
-  const isNewTurn = !turnState || turnState.key !== turn.turnKey;
+  // Regenerations keep the locked result for the same source turn. A swipe is a
+  // deliberate alternate take, so every swipe receives a completely fresh
+  // director analysis and fresh dice even when the source user message is unchanged.
+  const isSwipe = context?.generationType === 'swipe';
+  const isNewTurn = isSwipe || !turnState || turnState.key !== turn.turnKey;
   const shouldRetryFailedPass = !isNewTurn && turnState.backgroundSucceeded === false;
   if (isNewTurn || shouldRetryFailedPass) {
     const previousAffinity = shouldRetryFailedPass ? turnState.previousAffinity : ledger.affinity;
@@ -769,7 +903,7 @@ spindle.registerInterceptor(async (messages, context) => {
     };
 
     turnState = {
-      key: turn.turnKey,
+      key: isSwipe ? `${turn.turnKey}:swipe:${Date.now()}:${Math.random().toString(36).slice(2, 8)}` : turn.turnKey,
       sourceTextHash: hashText(turn.userText),
       previousAffinity,
       baselineAffinity: calibratedBaseline,
