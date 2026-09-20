@@ -35,13 +35,13 @@ const spindle = {
       return { data: [{ id: 'conn-1', name: 'Test', is_default: true }] };
     }
   },
+  async assemble(request, userId) {
+    assert.equal(userId, 'user-1');
+    assert.equal(request.blocks.length >= 84, true);
+    assembleCalls += 1;
+    return { messages };
+  },
   generate: {
-    async assemble(request, userId) {
-      assert.equal(userId, 'user-1');
-      assert.equal(request.blocks.length >= 84, true);
-      assembleCalls += 1;
-      return { messages };
-    },
     async quiet(request) {
       assert.equal(request.userId, 'user-1');
       quietCalls += 1;
@@ -105,6 +105,8 @@ const messages = [
   assert.equal(quietCalls, 1);
   assert.equal(assembleCalls, 1);
   assert.equal(first.breakdown[0].name, 'I Love TV! Suite 3.5 — Director Pass');
+  assert.equal(first.parameters.temperature, 0.95);
+  assert.equal(first.parameters.max_tokens, 20000);
   const injected = first.messages[first.breakdown[0].messageIndex].content;
   assert.match(injected, /Calibrated relationship baseline: 35%/);
   assert.match(injected, /Locked affinity: 37%/);
@@ -155,4 +157,3 @@ const messages = [
   console.error(error);
   process.exitCode = 1;
 });
-

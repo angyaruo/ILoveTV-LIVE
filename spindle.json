@@ -1,5 +1,5 @@
 {
-  "version": "2.1.1",
+  "version": "2.1.2",
   "name": "I Love TV! Suite",
   "identifier": "lumiverse_control_room",
   "author": "angyaruo",
@@ -8,12 +8,17 @@
   "description": "A self-contained, versioned I Love TV! roleplay suite with prompt editing, AI workshop, director tracking, memory, CYOA, and RPG tools.",
   "permissions": [
     "generation",
+    "generation_parameters",
     "interceptor",
     "chats",
+    "chat_mutation",
+    "characters",
+    "personas",
+    "presets",
+    "app_manipulation",
     "ui_panels"
   ],
   "entry_backend": "dist/backend.js",
   "entry_frontend": "dist/frontend.js",
   "interceptorTimeoutMs": 110000
 }
-

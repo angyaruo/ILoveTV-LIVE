@@ -2,7 +2,7 @@
 
 Version 2.1 turns the suite workspace into an Art Deco broadcast console and expands the bundled preset editor.
 
-Version 2.1.1 adds a dedicated luxury-lobby landing page, an animated collapsing navigation rail, softer contemporary card geometry, and highlighted state controls in place of raw checkboxes.
+Version 2.1.2 fixes native bundled-preset assembly, applies the suite's sampler defaults, adds collapsible prompt-category folders, expands the permissions required by the suite architecture, and polishes the lobby geometry.
 
 - Code-native SVG icons replace decorative emoji throughout the interface.
 - All Lumiverse prompt variables exposed by the bundled preset can be configured from the Preset tab.
@@ -35,7 +35,7 @@ Edits and toggles are stored per Lumiverse user. Chat narrative state remains is
 
 Install this repository from Lumiverse's Extensions panel. After updating, disable/re-enable the extension or restart Lumiverse so both bundles reload.
 
-Required permissions: `generation`, `interceptor`, `chats`, and `ui_panels`.
+Required permissions: `generation`, `generation_parameters`, `interceptor`, `chats`, `chat_mutation`, `characters`, `personas`, `presets`, `app_manipulation`, and `ui_panels`. Image permissions are deliberately omitted because this release does not yet ship an image-generation feature.
 
 ## Verification
 
@@ -46,4 +46,3 @@ node test-backend.cjs
 node test-retry.cjs
 node test-frontend.cjs
 ```
-
