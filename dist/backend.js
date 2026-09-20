@@ -2,7 +2,7 @@
 
 import { PRESET_VERSIONS } from './preset-versions.js';
 
-const ENGINE_VERSION = '2.1.1';
+const ENGINE_VERSION = '2.1.2';
 const DIRECTOR_TIMEOUT_MS = 90000;
 const CHOICE_TIMEOUT_MS = 120000;
 const MAX_LOG_ENTRIES = 30;
@@ -803,23 +803,40 @@ spindle.registerInterceptor(async (messages, context) => {
   const suiteConfig = await getSuiteConfig(userId);
   let workingMessages = messages;
   let suiteAssemblySucceeded = false;
+  let suiteAssemblyError = '';
   if (suiteConfig.enabled && chatId !== 'default') {
     try {
       const version = presetVersion(suiteConfig.selectedVersion);
-      const assembled = await spindle.generate.assemble({
+      if (typeof spindle.assemble !== 'function') {
+        throw new Error('Lumiverse prompt assembly API is unavailable. Update Lumiverse before using the bundled suite preset.');
+      }
+      const assembled = await spindle.assemble({
         blocks: resolvedSuiteBlocks(suiteConfig),
         chatId,
         connectionId: context?.connectionId,
-        generationType: context?.generationType,
         promptVariables: effectivePromptVariables(suiteConfig)
       }, userId);
       if (Array.isArray(assembled?.messages) && assembled.messages.length) {
         workingMessages = assembled.messages;
         suiteAssemblySucceeded = true;
+      } else {
+        throw new Error('Lumiverse returned an empty assembled prompt.');
       }
     } catch (error) {
-      spindle.log.warn(`I Love TV! Suite: bundled preset assembly failed (${error?.message || error}); retaining the host prompt.`);
+      suiteAssemblyError = error?.message || String(error);
+      spindle.log.warn(`I Love TV! Suite: bundled preset assembly failed (${suiteAssemblyError}); retaining the host prompt.`);
     }
+  }
+  if (suiteConfig.enabled && !suiteAssemblySucceeded) {
+    const failure = {
+      role: 'system',
+      content: `<control_room_error priority="CRITICAL">The I Love TV! bundled preset could not be assembled: ${suiteAssemblyError || 'unknown assembly error'}. The host prompt is being used for this response. Do not claim that the suite preset was applied.</control_room_error>`
+    };
+    sendFrontend({ type: 'suite:assembly_error', chatId, error: suiteAssemblyError || 'Unknown prompt assembly error.' }, userId);
+    return {
+      messages: [failure, ...workingMessages],
+      breakdown: [{ messageIndex: 0, name: `I Love TV! Suite ${presetVersion(suiteConfig.selectedVersion).id} — Assembly Error` }]
+    };
   }
   const modules = detectModules(workingMessages);
   const directorContext = buildDirectorContext(workingMessages);
@@ -964,11 +981,22 @@ spindle.registerInterceptor(async (messages, context) => {
   modified.splice(insertAt, 0, injected);
 
   sendFrontend({ type: 'control_room:state_data', chatId, ledger }, userId);
+  const sampler = presetVersion(suiteConfig.selectedVersion).samplerOverrides || {};
+  const parameters = sampler.enabled === false ? undefined : Object.fromEntries([
+    ['max_tokens', sampler.maxTokens],
+    ['temperature', sampler.temperature],
+    ['top_p', sampler.topP],
+    ['min_p', sampler.minP],
+    ['top_k', sampler.topK],
+    ['frequency_penalty', sampler.frequencyPenalty],
+    ['presence_penalty', sampler.presencePenalty],
+    ['repetition_penalty', sampler.repetitionPenalty]
+  ].filter(([, value]) => value !== null && value !== undefined && value !== ''));
   return {
     messages: modified,
+    ...(parameters && Object.keys(parameters).length ? { parameters } : {}),
     breakdown: [{ messageIndex: insertAt, name: `I Love TV! Suite ${presetVersion(suiteConfig.selectedVersion).id} — Director Pass` }]
   };
 }, 10);
 
 spindle.log.info(`I Love TV! Suite v${ENGINE_VERSION} initialized with ${PRESET_VERSIONS.length} bundled preset version(s).`);
-
