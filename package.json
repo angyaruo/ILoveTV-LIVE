@@ -1,9 +1,8 @@
 {
   "name": "lumiverse-control-room",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "type": "module",
   "main": "dist/backend.js",
   "module": "dist/backend.js",
   "description": "Versioned I Love TV! prompt suite, director, continuity memory, CYOA, RPG tools, and prompt workshop"
 }
-

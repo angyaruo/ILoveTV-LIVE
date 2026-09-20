@@ -16,8 +16,8 @@ const spindle = {
     async write(name, value, userId) { assert.equal(userId, 'user-1'); files.set(name, value); }
   },
   connections: { async list(userId) { assert.equal(userId, 'user-1'); return { data: [{ id: 'conn-1', is_default: true }] }; } },
+  async assemble(request, userId) { assert.equal(userId, 'user-1'); return { messages }; },
   generate: {
-    async assemble(request, userId) { assert.equal(userId, 'user-1'); return { messages }; },
     async quiet(request) {
       assert.equal(request.userId, 'user-1');
       calls += 1;
@@ -53,4 +53,3 @@ const messages = [
   assert.match(secondText, new RegExp(`LOCKED PATHFINDER ROLL: ${roll}/4`), 'retry must retain dice');
   console.log('background-retry-ok');
 })().catch(error => { console.error(error); process.exitCode = 1; });
-
