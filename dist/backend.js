@@ -19,6 +19,7 @@ function defaultLedger() {
       coreMemories: [],
       futureBranches: []
     },
+    npcs: {},
     selectedConnection: '',
     authorNote: '',
     baselineCalibrated: false,
@@ -44,7 +45,8 @@ function defaultSuiteConfig() {
     blockOrder: [],
     customBlocks: [],
     archivedBlocks: [],
-    rpgMode: false
+    rpgMode: false,
+    npcRepositoryEnabled: false
   };
 }
 
@@ -64,7 +66,8 @@ function normalizeSuiteConfig(value) {
     blockOrder: Array.isArray(input.blockOrder) ? input.blockOrder.map(String) : [],
     customBlocks: Array.isArray(input.customBlocks) ? input.customBlocks.filter(block => block && typeof block === 'object' && block.id) : [],
     archivedBlocks: Array.isArray(input.archivedBlocks) ? input.archivedBlocks.filter(item => item && typeof item === 'object' && item.block).slice(-100) : [],
-    rpgMode: input.rpgMode === true
+    rpgMode: input.rpgMode === true,
+    npcRepositoryEnabled: input.npcRepositoryEnabled === true
   };
 }
 
@@ -102,6 +105,27 @@ function resolvedSuiteBlocks(config) {
       id: 'suite-rpg-mode', name: '🎲 Suite RPG Mode', role: 'system', enabled: true,
       position: 'post_history', depth: 0, marker: null,
       content: '<suite_rpg_mode>Use the locked D20 action check supplied by the Control Room for uncertain actions. Track injuries, inventory, resources, conditions, and unresolved objectives consistently. Never reroll the locked check and never override character agency.</suite_rpg_mode>'
+    });
+  }
+  if (config.npcRepositoryEnabled) {
+    blocks.push({
+      id: 'suite-npc-repository', name: '🎭 Suite NPC Repository', role: 'system', enabled: true,
+      position: 'post_history', depth: 0, marker: null,
+      content: `<suite_npc_repository>
+CAST CONTINUITY // NPC DOSSIER CUE
+When a named NPC (not {{user}} or {{char}}) appears with meaningful presence for the first time, end your reply with one <npc_sheet name="Exact Display Name" status="new"> block. When an existing NPC's established facts meaningfully change (relationship, appearance, status), emit status="update" instead, including only the fields that changed. Use plain "key: value" lines inside the tag, one per line. Never emit a sheet for a character already listed as known in the dossier unless something changed. Never emit more than one sheet per NPC per reply.
+
+Format:
+<npc_sheet name="..." status="new|update">
+role: ...
+appearance: ...
+personality: ...
+voice: ...
+relationship_to_user: ...
+relationship:OtherNpcName: ...
+memory: one short new impression or event from this turn, or omit this line
+</npc_sheet>
+</suite_npc_repository>`
     });
   }
   return blocks;
@@ -148,6 +172,7 @@ function suiteState(config) {
     enabled: config.enabled,
     selectedVersion: config.selectedVersion,
     rpgMode: config.rpgMode,
+    npcRepositoryEnabled: config.npcRepositoryEnabled,
     versions: PRESET_VERSIONS.map(version => ({ id: version.id, label: version.label, description: version.description, blockCount: version.blocks.length })),
     blocks: suiteBlockSummaries(config),
     variables: suiteVariables(config),
@@ -166,9 +191,55 @@ function insertAfter(order, newId, afterId) {
   return result;
 }
 
+function slugify(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function normalizeNpcEntry(value, fallbackId = '') {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const name = typeof value.name === 'string' ? value.name.trim() : '';
+  const id = slugify(name || value.id || fallbackId);
+  if (!name || !id) return null;
+  const text = key => typeof value[key] === 'string' ? value[key].trim() : '';
+  const relationships = {};
+  if (value.relationships && typeof value.relationships === 'object' && !Array.isArray(value.relationships)) {
+    for (const [target, description] of Object.entries(value.relationships)) {
+      const targetId = slugify(target);
+      const detail = typeof description === 'string' ? description.trim() : '';
+      if (targetId && detail) relationships[targetId] = detail;
+    }
+  }
+  const turn = key => Number.isFinite(Number(value[key])) ? Math.max(0, Math.trunc(Number(value[key]))) : 0;
+  return {
+    id,
+    name,
+    role: text('role'),
+    appearance: text('appearance'),
+    personality: text('personality'),
+    voice: text('voice'),
+    relationshipToUser: text('relationshipToUser'),
+    relationships,
+    memories: mergeUnique([], value.memories, 8),
+    firstSeenTurn: turn('firstSeenTurn'),
+    lastUpdatedTurn: turn('lastUpdatedTurn'),
+    archived: value.archived === true
+  };
+}
+
 function normalizeLedger(value) {
   const base = defaultLedger();
   const input = value && typeof value === 'object' ? value : {};
+  const npcs = {};
+  if (input.npcs && typeof input.npcs === 'object' && !Array.isArray(input.npcs)) {
+    for (const [key, value] of Object.entries(input.npcs)) {
+      const npc = normalizeNpcEntry(value, key);
+      if (npc) npcs[npc.id] = npc;
+    }
+  }
   const normalized = {
     ...base,
     ...input,
@@ -177,6 +248,7 @@ function normalizeLedger(value) {
       ...base.continuity,
       ...(input.continuity && typeof input.continuity === 'object' ? input.continuity : {})
     },
+    npcs,
     settings: {
       ...base.settings,
       ...(input.settings && typeof input.settings === 'object' ? input.settings : {}),
@@ -657,8 +729,72 @@ spindle.onFrontendMessage(async (payload, userId) => {
   if (payload.type === 'suite:save_settings') {
     suiteConfig.enabled = payload.enabled !== false;
     suiteConfig.rpgMode = payload.rpgMode === true;
+    suiteConfig.npcRepositoryEnabled = payload.npcRepositoryEnabled === true;
     suiteConfig = await saveSuiteConfig(suiteConfig, userId);
     sendFrontend({ type: 'suite:config_saved', suite: suiteState(suiteConfig) }, userId);
+  }
+
+  if (payload.type === 'npc:upsert' && Array.isArray(payload.sheets)) {
+    for (const sheet of payload.sheets) {
+      if (!sheet || typeof sheet !== 'object' || typeof sheet.name !== 'string') continue;
+      const name = sheet.name.trim();
+      const id = slugify(name);
+      if (!id) continue;
+      const existing = ledger.npcs[id] || {
+        id, name, role: '', appearance: '', personality: '', voice: '', relationshipToUser: '',
+        relationships: {}, memories: [], firstSeenTurn: Number(ledger.turnCounter || 0), archived: false
+      };
+      const incomingFields = sheet.fields && typeof sheet.fields === 'object' && !Array.isArray(sheet.fields)
+        ? sheet.fields
+        : {};
+      const fields = {};
+      for (const key of ['role', 'appearance', 'personality', 'voice']) {
+        if (typeof incomingFields[key] === 'string') fields[key] = incomingFields[key].trim();
+      }
+      if (typeof incomingFields.relationship_to_user === 'string') {
+        fields.relationshipToUser = incomingFields.relationship_to_user.trim();
+      } else if (typeof incomingFields.relationshipToUser === 'string') {
+        fields.relationshipToUser = incomingFields.relationshipToUser.trim();
+      }
+      const relationships = {};
+      if (sheet.relationships && typeof sheet.relationships === 'object' && !Array.isArray(sheet.relationships)) {
+        for (const [target, description] of Object.entries(sheet.relationships)) {
+          const targetId = slugify(target);
+          const detail = typeof description === 'string' ? description.trim() : '';
+          if (targetId && detail) relationships[targetId] = detail;
+        }
+      }
+      ledger.npcs[id] = normalizeNpcEntry({
+        ...existing,
+        name,
+        ...fields,
+        relationships: { ...existing.relationships, ...relationships },
+        memories: typeof sheet.memory === 'string' && sheet.memory.trim()
+          ? mergeUnique(existing.memories, [sheet.memory], 8)
+          : existing.memories,
+        lastUpdatedTurn: Number(ledger.turnCounter || 0)
+      }, id);
+    }
+    ledger = await saveChatLedger(chatId, ledger, userId);
+    sendFrontend({ type: 'control_room:state_data', chatId, ledger }, userId);
+  }
+
+  if (payload.type === 'npc:archive' && payload.id) {
+    const id = slugify(payload.id);
+    if (ledger.npcs[id]) {
+      ledger.npcs[id] = { ...ledger.npcs[id], archived: true, lastUpdatedTurn: Number(ledger.turnCounter || 0) };
+      ledger = await saveChatLedger(chatId, ledger, userId);
+      sendFrontend({ type: 'control_room:state_data', chatId, ledger }, userId);
+    }
+  }
+
+  if (payload.type === 'npc:delete' && payload.id) {
+    const id = slugify(payload.id);
+    if (ledger.npcs[id]) {
+      delete ledger.npcs[id];
+      ledger = await saveChatLedger(chatId, ledger, userId);
+      sendFrontend({ type: 'control_room:state_data', chatId, ledger }, userId);
+    }
   }
 
   if (payload.type === 'suite:save_variable' && payload.blockId && payload.name) {
@@ -844,7 +980,8 @@ spindle.registerInterceptor(async (messages, context) => {
   let ledger = await getChatLedger(chatId, userId);
   let turnState = ledger.lastTurn;
 
-  const hasActiveWork = modules.affinity || modules.continuity || modules.pathfinding || modules.cyoa || Boolean(ledger.authorNote);
+  const hasActiveWork = modules.affinity || modules.continuity || modules.pathfinding || modules.cyoa || Boolean(ledger.authorNote)
+    || Boolean(suiteConfig.npcRepositoryEnabled && Object.keys(ledger.npcs || {}).length);
   if (!hasActiveWork) return workingMessages;
 
   // Regenerations keep the locked result for the same source turn. A swipe is a
@@ -978,7 +1115,29 @@ spindle.registerInterceptor(async (messages, context) => {
   const injected = { role: 'system', content: lines.join('\n') };
   const modified = [...workingMessages];
   const insertAt = Math.min(Math.max(turn.insertAt, 0), modified.length);
-  modified.splice(insertAt, 0, injected);
+  const additions = [];
+  const breakdown = [];
+  if (suiteConfig.npcRepositoryEnabled) {
+    const activeNpcs = Object.values(ledger.npcs || {})
+      .filter(npc => !npc.archived)
+      .sort((a, b) => Number(b.lastUpdatedTurn || 0) - Number(a.lastUpdatedTurn || 0))
+      .slice(0, 12);
+    if (activeNpcs.length) {
+      const dossierLines = [
+        '<npc_dossier priority="HIGH">',
+        'Known NPCs — do not re-introduce these as new characters:'
+      ];
+      activeNpcs.forEach(npc => {
+        dossierLines.push(`- ${npc.name}: ${npc.role || '(no role noted)'}. ${npc.relationshipToUser || ''}`);
+      });
+      dossierLines.push('</npc_dossier>');
+      additions.push({ role: 'system', content: dossierLines.join('\n') });
+      breakdown.push({ messageIndex: insertAt, name: 'I Love TV! Suite — NPC Dossier' });
+    }
+  }
+  additions.push(injected);
+  breakdown.push({ messageIndex: insertAt + additions.length - 1, name: `I Love TV! Suite ${presetVersion(suiteConfig.selectedVersion).id} — Director Pass` });
+  modified.splice(insertAt, 0, ...additions);
 
   sendFrontend({ type: 'control_room:state_data', chatId, ledger }, userId);
   const sampler = presetVersion(suiteConfig.selectedVersion).samplerOverrides || {};
@@ -995,7 +1154,7 @@ spindle.registerInterceptor(async (messages, context) => {
   return {
     messages: modified,
     ...(parameters && Object.keys(parameters).length ? { parameters } : {}),
-    breakdown: [{ messageIndex: insertAt, name: `I Love TV! Suite ${presetVersion(suiteConfig.selectedVersion).id} — Director Pass` }]
+    breakdown
   };
 }, 10);
 
