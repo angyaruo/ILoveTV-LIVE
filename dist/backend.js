@@ -6,6 +6,79 @@ const ENGINE_VERSION = '2.1.2';
 const DIRECTOR_TIMEOUT_MS = 90000;
 const CHOICE_TIMEOUT_MS = 120000;
 const MAX_LOG_ENTRIES = 30;
+const MAX_IMPORTED_BLOCK_CONTENT = 50000;
+const MAX_IMPORTED_VERSIONS = 20;
+const STALE_SCRIPT_DIRECTIONS_RE = /<script_directions[^>]*>[\s\S]*?<\/script_directions>/g;
+const BUNDLED_DISPLAY_SCRIPTS = [
+  {
+    "name": "🪻 | Tab Menu",
+    "find_regex": "<\\s*broadcast_deck\\b[^>]*>(?=(?:(?:(?!<\\s*\\/\\s*broadcast_deck\\s*>)[\\s\\S])*?<\\s*cyoa_choices\\s*>[\\s\\r\\n]*(?:🎬\\s*)?([^\\r\\n]+?)[\\s\\r\\n]+(?:\\*\\s*)?\\[?1\\]?[\\s.:)]+(?:\\[\\s*)?([^\\]\\r\\n]+)(?:\\s*\\])?\\s*[\\r\\n]+(?:\\*\\s*)?\\[?2\\]?[\\s.:)]+(?:\\[\\s*)?([^\\]\\r\\n]+)(?:\\s*\\])?\\s*[\\r\\n]+(?:\\*\\s*)?\\[?3\\]?[\\s.:)]+(?:\\[\\s*)?([^\\]\\r\\n]+)(?:\\s*\\])?\\s*[\\r\\n]+(?:\\*\\s*)?\\[?4\\]?[\\s.:)]+(?:\\[\\s*)?([^\\]\\r\\n]+)(?:\\s*\\])?\\s*[\\r\\n]+(?:\\*\\s*)?\\[?5\\]?[\\s.:)]+(?:\\[\\s*)?([^\\]\\r\\n]+)(?:\\s*\\])?\\s*[\\r\\n]*<\\s*\\/\\s*cyoa_choices\\s*>|))(?=(?:(?:(?!<\\s*\\/\\s*broadcast_deck\\s*>)[\\s\\S])*?<\\s*directors_booth\\s*>([\\s\\S]*?)<\\s*\\/\\s*directors_booth\\s*>|))(?=(?:(?:(?!<\\s*\\/\\s*broadcast_deck\\s*>)[\\s\\S])*?<\\s*kazz_commentary\\s*>([\\s\\S]*?)<\\s*\\/\\s*kazz_commentary\\s*>|))(?=(?:(?:(?!<\\s*\\/\\s*broadcast_deck\\s*>)[\\s\\S])*?\\[\\s*Affinity:\\s*([+-]?\\d+(?:\\.\\d+)?)\\s*%?\\s*\\|\\s*Δ\\s*\\(\\s*([+-]?\\d+(?:\\.\\d+)?)\\s*%?\\s*\\)\\s*\\|\\s*Dynamic:\\s*(.*?)\\s*\\]|))(?=(?:(?:(?!<\\s*\\/\\s*broadcast_deck\\s*>)[\\s\\S])*?<\\s*continuity_reel\\s*>([\\s\\S]*?)<\\s*\\/\\s*continuity_reel\\s*>|))[\\s\\S]*?<\\s*\\/\\s*broadcast_deck\\s*>",
+    "replace_string": "<style>\n/* =========================================================\n   LUMIVERSE PURPLE MULTI-DECK // ART DECO ICON SWITCHBOARD\n   ========================================================= */\n\ndiv.lumi-native-deck {\n  max-width: 520px;\n  width: 100%;\n  margin: 16px auto 10px auto;\n  background: var(--lumiverse-fill-strong, #16161e);\n  border: 1px solid var(--lumiverse-border, rgba(255, 255, 255, 0.1));\n  border-radius: var(--lcs-radius-sm, 14px);\n  padding: 12px 14px;\n  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55), 0 0 16px color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 10%, transparent);\n  box-sizing: border-box;\n  display: flex;\n  flex-direction: column;\n  gap: 12px;\n  font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif;\n  transition: border-color var(--lumiverse-transition-fast, 150ms ease);\n}\n\ndiv.lumi-native-deck:hover {\n  border-color: var(--lumiverse-primary-040, rgba(140, 130, 255, 0.35));\n}\n\n/* 1. AUTO-CLOAK EMPTY TABS & PANELS */\n.lumi-native-deck:has(.lumi-detect-cyoa:empty) .tab-btn-cyoa,\n.lumi-native-deck:has(.lumi-detect-cyoa:empty) .panel-cyoa { display: none !important; }\n\n.lumi-native-deck:has(.lumi-detect-booth:empty) .tab-btn-booth,\n.lumi-native-deck:has(.lumi-detect-booth:empty) .panel-booth { display: none !important; }\n\n.lumi-native-deck:has(.lumi-detect-kazz:empty) .tab-btn-kazz,\n.lumi-native-deck:has(.lumi-detect-kazz:empty) .panel-kazz { display: none !important; }\n\n.lumi-native-deck:has(.lumi-detect-chem:empty) .tab-btn-chem,\n.lumi-native-deck:has(.lumi-detect-chem:empty) .panel-chem { display: none !important; }\n\n.lumi-native-deck:has(.lumi-detect-reel:empty) .tab-btn-reel,\n.lumi-native-deck:has(.lumi-detect-reel:empty) .panel-reel { display: none !important; }\n\n/* 2. AUTO-CLOAK FULL DECK IF ALL MODULES ARE INACTIVE */\n.lumi-native-deck:has(.lumi-detect-cyoa:empty):has(.lumi-detect-booth:empty):has(.lumi-detect-kazz:empty):has(.lumi-detect-chem:empty):has(.lumi-detect-reel:empty) {\n  display: none !important;\n}\n\n/* 3. DYNAMIC LANDING WATERFALL (NO INITIAL RADIO CHECKED) */\n.lumi-native-deck:not(:has(input:checked)):has(.lumi-detect-cyoa:not(:empty)) .panel-cyoa { display: block !important; }\n.lumi-native-deck:not(:has(input:checked)):has(.lumi-detect-cyoa:not(:empty)) .tab-btn-cyoa {\n  background: color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 24%, rgba(255, 255, 255, 0.04)) !important;\n  border-color: var(--lumiverse-primary, #8c82ff) !important;\n  box-shadow: 0 0 12px color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 35%, transparent);\n}\n.lumi-native-deck:not(:has(input:checked)):has(.lumi-detect-cyoa:not(:empty)) .tab-btn-cyoa .lumi-tab-art {\n  filter: drop-shadow(0 0 6px rgba(255, 220, 140, 0.8)) brightness(1.25);\n  transform: scale(1.05);\n  opacity: 1;\n}\n\n.lumi-native-deck:not(:has(input:checked)):has(.lumi-detect-cyoa:empty):has(.lumi-detect-booth:not(:empty)) .panel-booth { display: block !important; }\n.lumi-native-deck:not(:has(input:checked)):has(.lumi-detect-cyoa:empty):has(.lumi-detect-booth:not(:empty)) .tab-btn-booth {\n  background: color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 24%, rgba(255, 255, 255, 0.04)) !important;\n  border-color: var(--lumiverse-primary, #8c82ff) !important;\n  box-shadow: 0 0 12px color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 35%, transparent);\n}\n.lumi-native-deck:not(:has(input:checked)):has(.lumi-detect-cyoa:empty):has(.lumi-detect-booth:not(:empty)) .tab-btn-booth .lumi-tab-art {\n  filter: drop-shadow(0 0 6px rgba(255, 220, 140, 0.8)) brightness(1.25);\n  transform: scale(1.05);\n  opacity: 1;\n}\n\n.lumi-native-deck:not(:has(input:checked)):has(.lumi-detect-cyoa:empty):has(.lumi-detect-booth:empty):has(.lumi-detect-kazz:not(:empty)) .panel-kazz { display: block !important; }\n.lumi-native-deck:not(:has(input:checked)):has(.lumi-detect-cyoa:empty):has(.lumi-detect-booth:empty):has(.lumi-detect-kazz:not(:empty)) .tab-btn-kazz {\n  background: color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 24%, rgba(255, 255, 255, 0.04)) !important;\n  border-color: var(--lumiverse-primary, #8c82ff) !important;\n  box-shadow: 0 0 12px color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 35%, transparent);\n}\n.lumi-native-deck:not(:has(input:checked)):has(.lumi-detect-cyoa:empty):has(.lumi-detect-booth:empty):has(.lumi-detect-kazz:not(:empty)) .tab-btn-kazz .lumi-tab-art {\n  filter: drop-shadow(0 0 6px rgba(255, 220, 140, 0.8)) brightness(1.25);\n  transform: scale(1.05);\n  opacity: 1;\n}\n\n.lumi-native-deck:not(:has(input:checked)):has(.lumi-detect-cyoa:empty):has(.lumi-detect-booth:empty):has(.lumi-detect-kazz:empty):has(.lumi-detect-chem:not(:empty)) .panel-chem { display: block !important; }\n.lumi-native-deck:not(:has(input:checked)):has(.lumi-detect-cyoa:empty):has(.lumi-detect-booth:empty):has(.lumi-detect-kazz:empty):has(.lumi-detect-chem:not(:empty)) .tab-btn-chem {\n  background: color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 24%, rgba(255, 255, 255, 0.04)) !important;\n  border-color: var(--lumiverse-primary, #8c82ff) !important;\n  box-shadow: 0 0 12px color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 35%, transparent);\n}\n.lumi-native-deck:not(:has(input:checked)):has(.lumi-detect-cyoa:empty):has(.lumi-detect-booth:empty):has(.lumi-detect-kazz:empty):has(.lumi-detect-chem:not(:empty)) .tab-btn-chem .lumi-tab-art {\n  filter: drop-shadow(0 0 6px rgba(255, 220, 140, 0.8)) brightness(1.25);\n  transform: scale(1.05);\n  opacity: 1;\n}\n\n.lumi-native-deck:not(:has(input:checked)):has(.lumi-detect-cyoa:empty):has(.lumi-detect-booth:empty):has(.lumi-detect-kazz:empty):has(.lumi-detect-chem:empty):has(.lumi-detect-reel:not(:empty)) .panel-reel { display: block !important; }\n.lumi-native-deck:not(:has(input:checked)):has(.lumi-detect-cyoa:empty):has(.lumi-detect-booth:empty):has(.lumi-detect-kazz:empty):has(.lumi-detect-chem:empty):has(.lumi-detect-reel:not(:empty)) .tab-btn-reel {\n  background: color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 24%, rgba(255, 255, 255, 0.04)) !important;\n  border-color: var(--lumiverse-primary, #8c82ff) !important;\n  box-shadow: 0 0 12px color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 35%, transparent);\n}\n.lumi-native-deck:not(:has(input:checked)):has(.lumi-detect-cyoa:empty):has(.lumi-detect-booth:empty):has(.lumi-detect-kazz:empty):has(.lumi-detect-chem:empty):has(.lumi-detect-reel:not(:empty)) .tab-btn-reel .lumi-tab-art {\n  filter: drop-shadow(0 0 6px rgba(255, 220, 140, 0.8)) brightness(1.25);\n  transform: scale(1.05);\n  opacity: 1;\n}\n\n/* 4. USER SELECTION INTERACTION */\n.lumi-tab-btn:has(input:checked) {\n  background: color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 24%, rgba(255, 255, 255, 0.04)) !important;\n  border-color: var(--lumiverse-primary, #8c82ff) !important;\n  box-shadow: 0 0 12px color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 35%, transparent);\n}\n.lumi-tab-btn:has(input:checked) .lumi-tab-art {\n  filter: drop-shadow(0 0 6px rgba(255, 220, 140, 0.8)) brightness(1.25);\n  transform: scale(1.05);\n  opacity: 1;\n}\n\n.lumi-native-deck:has(input[value=\"cyoa\"]:checked) .panel-cyoa { display: block !important; }\n.lumi-native-deck:has(input[value=\"booth\"]:checked) .panel-booth { display: block !important; }\n.lumi-native-deck:has(input[value=\"kazz\"]:checked) .panel-kazz { display: block !important; }\n.lumi-native-deck:has(input[value=\"chem\"]:checked) .panel-chem { display: block !important; }\n.lumi-native-deck:has(input[value=\"reel\"]:checked) .panel-reel { display: block !important; }\n\n/* Navigation Tab Strip */\n.lumi-nav-strip {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  gap: 10px;\n  border-bottom: 1px solid var(--lumiverse-border, rgba(255, 255, 255, 0.08));\n  padding-bottom: 10px;\n  overflow-x: auto;\n  scrollbar-width: none;\n}\n.lumi-nav-strip::-webkit-scrollbar {\n  display: none;\n}\n\n/* Square Icon Macro Pads */\n.lumi-tab-btn {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  padding: 6px;\n  aspect-ratio: 1 / 1;\n  min-height: calc(62px * var(--lumiverse-font-scale, 1));\n  max-width: calc(68px * var(--lumiverse-font-scale, 1));\n  width: 100%;\n  flex: 1 1 0;\n  background: var(--lumiverse-fill-subtle, rgba(255, 255, 255, 0.03));\n  border: 1px solid var(--lumiverse-border, rgba(255, 255, 255, 0.08));\n  border-radius: var(--lcs-radius-xs, 10px);\n  cursor: pointer;\n  user-select: none;\n  transition: all 0.2s ease;\n  box-sizing: border-box;\n}\n.lumi-tab-btn input[type=\"radio\"] {\n  display: none !important;\n}\n.lumi-tab-btn:hover {\n  background: rgba(255, 255, 255, 0.07);\n  border-color: color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 40%, transparent);\n}\n.lumi-tab-btn:hover .lumi-tab-art {\n  opacity: 1;\n  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.6)) brightness(1.15);\n  transform: translateY(-1px);\n}\n\n/* Enlarged Responsive Icon Sizing */\n.lumi-tab-art {\n  height: calc(48px * var(--lumiverse-font-scale, 1));\n  width: auto;\n  max-width: 92%;\n  max-height: 92%;\n  object-fit: contain;\n  pointer-events: none;\n  opacity: 0.78;\n  transition: transform 0.2s ease, filter 0.2s ease, opacity 0.2s ease;\n}\n\n/* Panels Base Layout */\n.lumi-deck-panel {\n  display: none;\n  animation: lumi-panel-fade 0.2s ease forwards;\n}\n@keyframes lumi-panel-fade {\n  from { opacity: 0; transform: translateY(2px); }\n  to { opacity: 1; transform: translateY(0); }\n}\n\n.lumi-inset-card {\n  background: var(--lumiverse-fill-subtle, rgba(255, 255, 255, 0.02));\n  border: 1px solid var(--lumiverse-border, rgba(255, 255, 255, 0.06));\n  border-radius: var(--lcs-radius-xs, 8px);\n  padding: 10px 12px;\n  box-sizing: border-box;\n}\n\n.lumi-head-strip {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  border-bottom: 1px solid var(--lumiverse-border, rgba(255, 255, 255, 0.08));\n  padding-bottom: 5px;\n  margin-bottom: 8px;\n}\n.lumi-head-title {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  font-size: calc(11px * var(--lumiverse-font-scale, 1));\n  font-weight: 700;\n  color: var(--lumiverse-primary, #8c82ff) !important;\n  letter-spacing: 0.04em;\n  text-transform: uppercase;\n}\n.lumi-dot-indicator {\n  width: 6px;\n  height: 6px;\n  border-radius: 50%;\n  background: var(--lumiverse-primary, #8c82ff);\n  box-shadow: 0 0 6px var(--lumiverse-primary, #8c82ff);\n  display: inline-block;\n}\n.lumi-status-badge {\n  font-size: calc(9px * var(--lumiverse-font-scale, 1));\n  font-weight: 700;\n  background: color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 14%, transparent);\n  border: 1px solid color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 32%, transparent);\n  color: var(--lumiverse-primary-text, #8c82ff) !important;\n  padding: 1px 6px;\n  border-radius: var(--lcs-radius-xs, 4px);\n  letter-spacing: 0.04em;\n}\n\n/* CYOA Stack Rows */\n.lumi-cyoa-row {\n  display: flex;\n  align-items: center;\n  gap: 9px;\n  background: var(--lumiverse-fill-subtle, rgba(255, 255, 255, 0.02));\n  border: 1px solid var(--lumiverse-border, rgba(255, 255, 255, 0.06));\n  border-left: 3px solid var(--lumiverse-primary, #8c82ff);\n  border-radius: var(--lcs-radius-xs, 4px);\n  padding: 6px 9px;\n  margin-bottom: 5px;\n  transition: background 0.15s ease, border-color 0.15s ease;\n}\n.lumi-cyoa-row:hover {\n  background: color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 8%, transparent);\n  border-color: var(--lumiverse-primary-020, rgba(140, 130, 255, 0.2));\n}\n.lumi-cyoa-row.custom {\n  border-style: dashed;\n  border-left-style: solid;\n}\n.lumi-cyoa-num {\n  font-family: \"SF Mono\", \"Fira Code\", Consolas, monospace;\n  font-size: calc(10px * var(--lumiverse-font-scale, 1));\n  font-weight: 700;\n  background: color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 16%, transparent);\n  color: var(--lumiverse-primary, #8c82ff) !important;\n  padding: 1px 5px;\n  border-radius: 3px;\n  flex-shrink: 0;\n}\n.lumi-cyoa-row.custom .lumi-cyoa-num {\n  background: rgba(255, 255, 255, 0.08);\n  color: var(--lumiverse-text, #e2e8f0) !important;\n}\n.lumi-cyoa-text {\n  font-size: calc(11.5px * var(--lumiverse-font-scale, 1)) !important;\n  line-height: 1.4 !important;\n  color: var(--lumiverse-text, #e2e8f0) !important;\n}\n\n/* Monospace Prose Body Handling */\n.lumi-mono-text, .lumi-mono-text *, .lumi-mono-text p, .lumi-mono-text span {\n  font-family: \"SF Mono\", \"Fira Code\", Consolas, monospace !important;\n  font-size: calc(11.5px * var(--lumiverse-font-scale, 1)) !important;\n  line-height: 1.5 !important;\n  color: var(--lumiverse-text, #e2e8f0) !important;\n  text-shadow: none !important;\n}\n\n/* VU Meter Inset */\n.lumi-vu-track {\n  position: relative;\n  width: 100%;\n  height: 10px;\n  background: rgba(255, 255, 255, 0.04);\n  border: 1px solid var(--lumiverse-border, rgba(255, 255, 255, 0.08));\n  border-radius: 999px;\n  margin: 6px 0 2px 0;\n  box-sizing: border-box;\n}\n.lumi-vu-centerline {\n  position: absolute;\n  top: -2px;\n  bottom: -2px;\n  left: 50%;\n  width: 2px;\n  background: var(--lumiverse-primary, #8c82ff);\n  opacity: 0.6;\n  transform: translateX(-50%);\n  z-index: 2;\n}\n.lumi-vu-needle {\n  position: absolute;\n  top: 50%;\n  width: 12px;\n  height: 12px;\n  border-radius: 50%;\n  background: #ffffff;\n  border: 2px solid var(--lumiverse-primary, #8c82ff);\n  box-shadow: 0 0 8px var(--lumiverse-primary, #8c82ff);\n  transform: translate(-50%, -50%);\n  z-index: 3;\n  left: calc(50% + (var(--curr) * 0.5%));\n}\n</style>\n\n<div class=\"lumi-native-deck\">\n  <!-- Hidden Detection Anchors (Used by CSS :empty) -->\n  <span class=\"lumi-detect-cyoa\" style=\"display:none;\">$2</span>\n  <span class=\"lumi-detect-booth\" style=\"display:none;\">$7</span>\n  <span class=\"lumi-detect-kazz\" style=\"display:none;\">$8</span>\n  <span class=\"lumi-detect-chem\" style=\"display:none;\">$9</span>\n  <span class=\"lumi-detect-reel\" style=\"display:none;\">$12</span>\n\n  <!-- Navigation Icon Switchboard -->\n  <nav class=\"lumi-nav-strip\">\n    <label class=\"lumi-tab-btn tab-btn-cyoa\" title=\"Moves // CYOA Choices\">\n      <input type=\"radio\" name=\"lumi_deck_tab\" value=\"cyoa\">\n      <img src=\"https://files.catbox.moe/cr4ni3.png\" class=\"lumi-tab-art\" alt=\"Moves\" />\n    </label>\n    <label class=\"lumi-tab-btn tab-btn-booth\" title=\"Director's Booth Commentary\">\n      <input type=\"radio\" name=\"lumi_deck_tab\" value=\"booth\">\n      <img src=\"https://files.catbox.moe/fbo4ea.png\" class=\"lumi-tab-art\" alt=\"Booth\" />\n    </label>\n    <label class=\"lumi-tab-btn tab-btn-kazz\" title=\"Kazz Commentary // Wire Feed\">\n      <input type=\"radio\" name=\"lumi_deck_tab\" value=\"kazz\">\n      <img src=\"https://files.catbox.moe/ad7af0.png\" class=\"lumi-tab-art\" alt=\"Commentary\" />\n    </label>\n    <label class=\"lumi-tab-btn tab-btn-chem\" title=\"Co-Star Affinity // VU Meter\">\n      <input type=\"radio\" name=\"lumi_deck_tab\" value=\"chem\">\n      <img src=\"https://files.catbox.moe/y6vryg.png\" class=\"lumi-tab-art\" alt=\"Affinity\" />\n    </label>\n    <label class=\"lumi-tab-btn tab-btn-reel\" title=\"Continuity Archive Reel\">\n      <input type=\"radio\" name=\"lumi_deck_tab\" value=\"reel\">\n      <img src=\"https://files.catbox.moe/maqknh.png\" class=\"lumi-tab-art\" alt=\"Reel\" />\n    </label>\n  </nav>\n\n  <!-- Content Deck Panels -->\n  <div class=\"lumi-panels-container\">\n    <!-- Panel 1: CYOA Decisions -->\n    <div class=\"lumi-deck-panel panel-cyoa\">\n      <div class=\"lumi-inset-card\">\n        <div class=\"lumi-head-strip\">\n          <div class=\"lumi-head-title\">\n            <span class=\"lumi-dot-indicator\"></span>\n            <span>$1</span>\n          </div>\n          <span class=\"lumi-status-badge\">DIRECTOR'S CUT</span>\n        </div>\n        <div class=\"lumi-cyoa-row\"><span class=\"lumi-cyoa-num\">01</span><span class=\"lumi-cyoa-text\">$2</span></div>\n        <div class=\"lumi-cyoa-row\"><span class=\"lumi-cyoa-num\">02</span><span class=\"lumi-cyoa-text\">$3</span></div>\n        <div class=\"lumi-cyoa-row\"><span class=\"lumi-cyoa-num\">03</span><span class=\"lumi-cyoa-text\">$4</span></div>\n        <div class=\"lumi-cyoa-row\"><span class=\"lumi-cyoa-num\">04</span><span class=\"lumi-cyoa-text\">$5</span></div>\n        <div class=\"lumi-cyoa-row custom\"><span class=\"lumi-cyoa-num\">05</span><span class=\"lumi-cyoa-text\">$6</span></div>\n        <div style=\"display: flex; justify-content: space-between; border-top: 1px solid var(--lumiverse-border, rgba(255, 255, 255, 0.08)); padding-top: 6px; margin-top: 6px; font-size: calc(9.5px * var(--lumiverse-font-scale, 1)); color: var(--lumiverse-text-dim, #888899);\">\n          <span style=\"font-family: monospace; letter-spacing: 0.04em;\">// DIRECTIVE: ENTER [1-5] OR TYPE FREE INPUT</span>\n          <span>READY</span>\n        </div>\n      </div>\n    </div>\n\n    <!-- Panel 2: Director's Booth -->\n    <div class=\"lumi-deck-panel panel-booth\">\n      <div class=\"lumi-inset-card lumi-mono-text\" style=\"position: relative; padding-left: 56px;\">\n        <img src=\"https://files.catbox.moe/pypon9.png\" style=\"position: absolute; bottom: -4px; left: -10px; width: 60px; height: auto; z-index: 5; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.5)); pointer-events: none;\" alt=\"Mr. TV\" />\n        <div class=\"lumi-head-strip\">\n          <span class=\"lumi-head-title\">DIRECTOR'S BOOTH COMMENTARY</span>\n          <span class=\"lumi-status-badge\">APPROVED</span>\n        </div>\n        <div>$7</div>\n      </div>\n    </div>\n\n    <!-- Panel 3: Kazz Commentary -->\n    <div class=\"lumi-deck-panel panel-kazz\">\n      <div class=\"lumi-inset-card\">\n        <div class=\"lumi-head-strip\">\n          <span class=\"lumi-head-title\">@kazz_the_spazz // UNCENSORED WIRE</span>\n          <span class=\"lumi-status-badge\">LIVE FEED</span>\n        </div>\n        <div style=\"background: var(--lumiverse-fill-subtle, rgba(255, 255, 255, 0.02)); border: 1px solid var(--lumiverse-border, rgba(255, 255, 255, 0.06)); border-left: 3px solid var(--lumiverse-primary, #8c82ff); border-radius: var(--lcs-radius-xs, 4px); padding: 8px 10px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: calc(11.5px * var(--lumiverse-font-scale, 1)); line-height: 1.45; color: var(--lumiverse-text, #e2e8f0);\">\n          $8\n        </div>\n        <div style=\"display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: calc(9.5px * var(--lumiverse-font-scale, 1));\">\n          <span style=\"background: color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 14%, transparent); border: 1px solid color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 32%, transparent); color: var(--lumiverse-primary-text, #8c82ff); padding: 1px 6px; border-radius: 4px; font-weight: 700;\">▲ 69 CLAPS</span>\n          <span style=\"font-family: monospace; color: var(--lumiverse-text-dim, #888899);\">frequenza_del_cuore.log</span>\n        </div>\n      </div>\n    </div>\n\n    <!-- Panel 4: Co-Star VU Meter -->\n    <div class=\"lumi-deck-panel panel-chem\">\n      <div class=\"lumi-inset-card\" style=\"display: flex; flex-direction: column; gap: 7px; --curr: $9; --delta: $10;\">\n        <div style=\"display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--lumiverse-border, rgba(255, 255, 255, 0.08)); padding-bottom: 5px;\">\n          <span style=\"font-size: calc(11px * var(--lumiverse-font-scale, 1)); font-weight: 700; color: var(--lumiverse-primary, #8c82ff); text-transform: uppercase;\">CO-STAR AFFINITY DISPOSITION</span>\n          <span style=\"font-size: calc(11px * var(--lumiverse-font-scale, 1)); font-weight: 700; color: var(--lumiverse-primary-text, #8c82ff); font-family: monospace;\">$9% (Δ $10%)</span>\n        </div>\n        <div class=\"lumi-vu-track\">\n          <div class=\"lumi-vu-centerline\"></div>\n          <div class=\"lumi-vu-needle\"></div>\n        </div>\n        <div style=\"display: flex; justify-content: space-between; font-size: calc(8.5px * var(--lumiverse-font-scale, 1)); color: var(--lumiverse-text-dim, #888899); font-family: monospace;\">\n          <span>-100% DISCORD</span><span>0% NEUTRAL</span><span>+100% RAPPORT</span>\n        </div>\n        <div style=\"background: var(--lumiverse-fill-subtle, rgba(255, 255, 255, 0.03)); border-left: 3px solid var(--lumiverse-primary, #8c82ff); border-radius: 4px; padding: 6px 9px; font-size: calc(11.5px * var(--lumiverse-font-scale, 1)); color: var(--lumiverse-text, #e2e8f0); font-style: italic; margin-top: 3px;\">\n          \"$11\"\n        </div>\n      </div>\n    </div>\n\n    <!-- Panel 5: Continuity Reel -->\n    <div class=\"lumi-deck-panel panel-reel\">\n      <div class=\"lumi-inset-card lumi-mono-text\">\n        <div class=\"lumi-head-strip\">\n          <span class=\"lumi-head-title\">CONTINUITY REEL ARCHIVE</span>\n          <span class=\"lumi-status-badge\">MASTER LOG</span>\n        </div>\n        <div>$12</div>\n      </div>\n    </div>\n  </div>\n</div>",
+    "flags": "gis",
+    "placement": [
+      "ai_output"
+    ],
+    "target": "display",
+    "min_depth": null,
+    "max_depth": null,
+    "trim_strings": [],
+    "run_on_edit": false,
+    "substitute_macros": "none",
+    "sort_order": 12,
+    "description": ""
+  },
+  {
+    "name": "🪻 | Script Directions (Drop-Down CoT)",
+    "find_regex": "<\\s*script_directions\\s*>([\\s\\S]*?)<\\s*\\/\\s*script_directions\\s*>",
+    "replace_string": "<details style=\"max-width: 520px; width: 100%; margin: 6px auto 12px auto; background: transparent; border: none; border-left: 2px solid var(--lumiverse-primary, #8c82ff); padding: 0 0 0 8px; box-sizing: border-box; display: block;\"><summary style=\"display: inline-flex; align-items: center; gap: 6px; padding: 2px 0; cursor: pointer; user-select: none; list-style: none; outline: none; font-family: 'SF Mono', 'Fira Code', Consolas, monospace; font-size: calc(11px * var(--lumiverse-font-scale, 1)); color: var(--lumiverse-text-dim, #888899);\"><span style=\"font-size: 8px; display: inline-block;\">▶</span><span style=\"letter-spacing: 0.04em;\">// script_directions.log</span></summary><pre style=\"margin: 6px 0 2px 0; padding: 8px 10px; background: var(--lumiverse-fill-subtle, rgba(255, 255, 255, 0.03)); border: 1px solid var(--lumiverse-border, rgba(255, 255, 255, 0.06)); border-radius: var(--lcs-radius-xs, 4px); font-family: 'SF Mono', 'Fira Code', Consolas, monospace; font-size: calc(11px * var(--lumiverse-font-scale, 1)); line-height: 1.5; color: var(--lumiverse-text-dim, #888899); white-space: pre-wrap; word-break: break-word; box-sizing: border-box;\">$1</pre></details>",
+    "flags": "gis",
+    "placement": [
+      "ai_output"
+    ],
+    "target": "display",
+    "min_depth": null,
+    "max_depth": null,
+    "trim_strings": [],
+    "run_on_edit": false,
+    "substitute_macros": "none",
+    "sort_order": 13,
+    "description": ""
+  },
+  {
+    "name": "🪻 | Scene Header (Lumiverse Theme)",
+    "find_regex": "<\\s*tv_header\\s*>\\s*(?:[-*]\\s*)?Location[^:\\n]*:\\s*(.*?)\\r?\\n(?:[-*]\\s*)?Time[^:\\n]*:\\s*(.*?)\\r?\\n(?:[-*]\\s*)?Weather[^:\\n]*:\\s*(.*?)\\r?\\n(?:[-*]\\s*)?Position[^:\\n]*:\\s*(.*?)\\r?\\n(?:[-*]\\s*)?Emotion[^:\\n]*:\\s*(.*?)\\r?\\n(?:[-*]\\s*)?Feelings[^:\\n]*:\\s*(.*?)\\r?\\n(?:[-*]\\s*)?Thoughts[^:\\n]*:\\s*(.*?)\\s*<\\s*\\/tv_header\\s*>",
+    "replace_string": "<style>\n/* =========================================================\n   NATIVE LUMIVERSE SCENE TELEMETRY HEADER\n   ========================================================= */\n\n.lumi-header-wrapper {\n  max-width: 520px;\n  width: 100%;\n  margin: 14px auto 10px auto;\n  box-sizing: border-box;\n}\n\n/* Main Native Card Container */\n.lumi-header-card {\n  background: var(--lumiverse-fill-strong, #16161e);\n  border: 1px solid var(--lumiverse-border, rgba(255, 255, 255, 0.1));\n  border-radius: var(--lcs-radius-sm, 8px);\n  padding: 12px 14px;\n  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  transition: border-color var(--lumiverse-transition-fast, 150ms ease);\n}\n\n.lumi-header-card:hover {\n  border-color: var(--lumiverse-primary-040, rgba(140, 130, 255, 0.4));\n}\n\n/* Top System Navigation Ribbon */\n.lumi-header-top {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  border-bottom: 1px solid var(--lumiverse-border, rgba(255, 255, 255, 0.08));\n  padding-bottom: 6px;\n}\n\n.lumi-header-badge {\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  font-size: calc(11px * var(--lumiverse-font-scale, 1));\n  font-weight: 600;\n  color: var(--lumiverse-primary-text, #8c82ff) !important;\n  letter-spacing: 0.04em;\n  text-transform: uppercase;\n}\n\n.lumi-header-pill {\n  font-size: calc(10px * var(--lumiverse-font-scale, 1));\n  padding: 1px 6px;\n  border-radius: 999px;\n  background: color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 12%, transparent);\n  border: 1px solid color-mix(in srgb, var(--lumiverse-primary, #8c82ff) 30%, transparent);\n  color: var(--lumiverse-primary, #8c82ff);\n  font-weight: 600;\n}\n\n/* Telemetry Grid */\n.lumi-telemetry-grid {\n  display: grid;\n  grid-template-columns: 1fr 1fr;\n  gap: 4px 10px;\n  font-size: calc(12.5px * var(--lumiverse-font-scale, 1));\n  line-height: 1.4;\n  color: var(--lumiverse-text, #e2e8f0);\n}\n\n.lumi-telemetry-grid,\n.lumi-telemetry-grid * {\n  color: var(--lumiverse-text, #e2e8f0) !important;\n  text-shadow: none !important;\n}\n\n.lumi-grid-label {\n  font-weight: 600;\n  color: var(--lumiverse-primary, #8c82ff) !important;\n  font-size: calc(11.5px * var(--lumiverse-font-scale, 1));\n}\n\n.lumi-grid-full {\n  grid-column: span 2;\n}\n\n/* Inset Character Thoughts Box */\n.lumi-thoughts-inset {\n  background: var(--lumiverse-fill-subtle, rgba(255, 255, 255, 0.04));\n  border: 1px solid var(--lcs-glass-border, rgba(255, 255, 255, 0.06));\n  border-left: 3px solid var(--lumiverse-primary, #8c82ff);\n  border-radius: var(--lcs-radius-xs, 4px);\n  padding: 7px 10px;\n  margin-top: 2px;\n}\n\n.lumi-thoughts-header {\n  font-size: calc(10px * var(--lumiverse-font-scale, 1));\n  font-weight: 600;\n  color: var(--lumiverse-text-dim, #888899);\n  letter-spacing: 0.05em;\n  margin-bottom: 2px;\n  text-transform: uppercase;\n}\n\n.lumi-thoughts-body,\n.lumi-thoughts-body * {\n  font-size: calc(12px * var(--lumiverse-font-scale, 1)) !important;\n  font-style: italic !important;\n  line-height: 1.45 !important;\n  color: var(--lumiverse-text, #e2e8f0) !important;\n  text-shadow: none !important;\n}\n</style>\n\n<div class=\"lumi-header-wrapper\">\n  <div class=\"lumi-header-card\">\n    \n    <!-- Top System Title Bar -->\n    <div class=\"lumi-header-top\">\n      <div class=\"lumi-header-badge\">\n        <span>BROADCAST TELEMETRY // CH-24</span>\n      </div>\n      <span class=\"lumi-header-pill\">$2</span>\n    </div>\n\n    <!-- Metadata Grid -->\n    <div class=\"lumi-telemetry-grid\">\n      <div><span class=\"lumi-grid-label\">LOC:</span> $1</div>\n      <div><span class=\"lumi-grid-label\">WX:</span> $3</div>\n      <div class=\"lumi-grid-full\"><span class=\"lumi-grid-label\">POS:</span> $4</div>\n      <div><span class=\"lumi-grid-label\">EMO:</span> $5</div>\n      <div><span class=\"lumi-grid-label\">DYN:</span> $6</div>\n    </div>\n\n    <!-- Inset Thoughts Terminal -->\n    <div class=\"lumi-thoughts-inset\">\n      <div class=\"lumi-thoughts-header\">// INTERNAL THOUGHTS</div>\n      <div class=\"lumi-thoughts-body\">\"$7\"</div>\n    </div>\n\n  </div>\n</div>",
+    "flags": "gis",
+    "placement": [
+      "ai_output"
+    ],
+    "target": "display",
+    "min_depth": null,
+    "max_depth": null,
+    "trim_strings": [],
+    "run_on_edit": false,
+    "substitute_macros": "none",
+    "sort_order": 17,
+    "description": ""
+  },
+  {
+    "name": "Anti-Truncation Disclaimer Cloak",
+    "find_regex": "<\\s*(?:disclaimer)\\b[^>]*>[\\s\\S]*?(?:<\\s*\\/\\s*(?:disclaimer)\\s*>|$)",
+    "replace_string": "",
+    "flags": "gis",
+    "placement": [
+      "ai_output"
+    ],
+    "target": "display",
+    "min_depth": null,
+    "max_depth": null,
+    "trim_strings": [],
+    "run_on_edit": false,
+    "substitute_macros": "none",
+    "sort_order": 53,
+    "description": ""
+  }
+];
 
 function defaultLedger() {
   return {
@@ -45,29 +118,125 @@ function defaultSuiteConfig() {
     blockOrder: [],
     customBlocks: [],
     archivedBlocks: [],
+    customVersions: [],
     rpgMode: false,
-    npcRepositoryEnabled: false
+    npcRepositoryEnabled: false,
+    stripStaleScriptDirections: true,
+    bundledDisplaySkin: true
   };
 }
 
-function presetVersion(versionId) {
-  return PRESET_VERSIONS.find(version => version.id === versionId) || PRESET_VERSIONS[0];
+function presetVersion(versionId, customVersions = []) {
+  return customVersions.find(version => version.id === versionId)
+    || PRESET_VERSIONS.find(version => version.id === versionId)
+    || PRESET_VERSIONS[0];
+}
+
+function versionSlug(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+}
+
+function blockWithToggleDescription(block) {
+  const content = String(block.content || '');
+  const match = content.match(/^\s*\[\[toggle_description:\s*(.+?)\]\]\s*(?:\r?\n)?/i);
+  return {
+    ...block,
+    content: match ? content.slice(match[0].length) : content,
+    toggleDescription: match ? match[1].trim() : String(block.toggleDescription || '')
+  };
+}
+
+function validateImportedVersion(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const id = versionSlug(value.id);
+  const label = typeof value.label === 'string' ? value.label.trim() : '';
+  if (!id || !label || !Array.isArray(value.blocks) || !value.blocks.length) return null;
+  const blocks = [];
+  for (const rawBlock of value.blocks) {
+    if (!rawBlock || typeof rawBlock !== 'object' || !rawBlock.id) return null;
+    const block = blockWithToggleDescription({
+      id: String(rawBlock.id),
+      name: String(rawBlock.name || 'Untitled block'),
+      content: String(rawBlock.content || ''),
+      role: rawBlock.role || 'system',
+      enabled: rawBlock.enabled !== false,
+      position: rawBlock.position || 'pre_history',
+      depth: Number(rawBlock.depth || 0),
+      marker: rawBlock.marker || null,
+      isLocked: Boolean(rawBlock.isLocked),
+      color: rawBlock.color || null,
+      injectionTrigger: Array.isArray(rawBlock.injectionTrigger) ? rawBlock.injectionTrigger : [],
+      group: rawBlock.group || null,
+      categoryMode: rawBlock.categoryMode || null,
+      characterTagTrigger: Array.isArray(rawBlock.characterTagTrigger) ? rawBlock.characterTagTrigger : [],
+      variables: Array.isArray(rawBlock.variables) ? rawBlock.variables : [],
+      toggleDescription: rawBlock.toggleDescription || ''
+    });
+    if (block.content.length > MAX_IMPORTED_BLOCK_CONTENT) return null;
+    blocks.push(block);
+  }
+  return {
+    id, label,
+    description: String(value.description || ''),
+    imported: true,
+    blocks,
+    promptVariables: value.promptVariables && typeof value.promptVariables === 'object' ? value.promptVariables : {},
+    promptBehavior: value.promptBehavior && typeof value.promptBehavior === 'object' ? value.promptBehavior : {},
+    completionSettings: value.completionSettings && typeof value.completionSettings === 'object' ? value.completionSettings : {},
+    advancedSettings: value.advancedSettings && typeof value.advancedSettings === 'object' ? value.advancedSettings : {},
+    samplerOverrides: value.samplerOverrides && typeof value.samplerOverrides === 'object' ? value.samplerOverrides : {}
+  };
+}
+
+function transformLumiversePreset(source, requestedName = '') {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) throw new Error('Preset export must be a JSON object.');
+  if (!Array.isArray(source.blocks) || !source.blocks.length) throw new Error('Preset export must contain at least one prompt block.');
+  const label = String(requestedName || source.presetVersion || source.name || '').trim();
+  if (!label) throw new Error('Give this imported preset version a name.');
+  const transformed = validateImportedVersion({
+    id: `imported-${versionSlug(label)}`,
+    label,
+    description: source.description || '',
+    blocks: source.blocks,
+    promptVariables: source.promptVariables || {},
+    promptBehavior: source.promptBehavior || {},
+    completionSettings: source.completionSettings || {},
+    advancedSettings: source.advancedSettings || {},
+    samplerOverrides: source.samplerOverrides || {}
+  });
+  if (!transformed) {
+    const oversized = source.blocks.some(block => String(block?.content || '').length > MAX_IMPORTED_BLOCK_CONTENT);
+    if (oversized) throw new Error('A prompt block exceeds the 50,000 character import limit.');
+    throw new Error('Preset export contains malformed prompt blocks.');
+  }
+  return transformed;
 }
 
 function normalizeSuiteConfig(value) {
   const base = defaultSuiteConfig();
   const input = value && typeof value === 'object' ? value : {};
+  const customVersions = Array.isArray(input.customVersions)
+    ? input.customVersions.map(validateImportedVersion).filter(Boolean).slice(-MAX_IMPORTED_VERSIONS)
+    : [];
   return {
     ...base,
     ...input,
-    selectedVersion: presetVersion(input.selectedVersion)?.id || base.selectedVersion,
+    selectedVersion: presetVersion(input.selectedVersion, customVersions)?.id || base.selectedVersion,
     blockOverrides: input.blockOverrides && typeof input.blockOverrides === 'object' ? input.blockOverrides : {},
     promptVariables: input.promptVariables && typeof input.promptVariables === 'object' ? input.promptVariables : {},
     blockOrder: Array.isArray(input.blockOrder) ? input.blockOrder.map(String) : [],
     customBlocks: Array.isArray(input.customBlocks) ? input.customBlocks.filter(block => block && typeof block === 'object' && block.id) : [],
     archivedBlocks: Array.isArray(input.archivedBlocks) ? input.archivedBlocks.filter(item => item && typeof item === 'object' && item.block).slice(-100) : [],
+    customVersions,
     rpgMode: input.rpgMode === true,
-    npcRepositoryEnabled: input.npcRepositoryEnabled === true
+    npcRepositoryEnabled: input.npcRepositoryEnabled === true,
+    stripStaleScriptDirections: input.stripStaleScriptDirections !== false,
+    bundledDisplaySkin: input.bundledDisplaySkin !== false
   };
 }
 
@@ -86,11 +255,52 @@ async function saveSuiteConfig(config, userId) {
   return normalized;
 }
 
+function stripStaleScriptDirections(messages) {
+  return messages.map(message => {
+    if (!message?.__isChatHistory || typeof message.content !== 'string') return message;
+    return { ...message, content: message.content.replace(STALE_SCRIPT_DIRECTIONS_RE, '') };
+  });
+}
+
+async function syncBundledDisplaySkin(config, userId) {
+  if (!spindle.regex_scripts?.list || !spindle.regex_scripts?.create || !spindle.regex_scripts?.update) {
+    spindle.log.warn('I Love TV! Suite: Regex Scripts API is unavailable; bundled display skin was not synchronized.');
+    return;
+  }
+  try {
+    const result = await spindle.regex_scripts.list({ limit: 100, userId });
+    const existingScripts = Array.isArray(result?.data) ? result.data : [];
+    for (const source of BUNDLED_DISPLAY_SCRIPTS) {
+      const key = versionSlug(source.name);
+      const desired = {
+        ...source,
+        scope: 'global',
+        scope_id: null,
+        disabled: config.bundledDisplaySkin !== true,
+        folder: 'I Love TV! Suite',
+        folder_version: ENGINE_VERSION,
+        metadata: { suiteFeature: 'bundled-display-skin', key }
+      };
+      const existing = existingScripts.find(script => script?.metadata?.suiteFeature === 'bundled-display-skin' && script?.metadata?.key === key);
+      if (!existing) {
+        await spindle.regex_scripts.create(desired, userId);
+        continue;
+      }
+      if (existing.can_mutate === false) continue;
+      const fields = ['name', 'find_regex', 'replace_string', 'flags', 'placement', 'target', 'min_depth', 'max_depth', 'trim_strings', 'run_on_edit', 'substitute_macros', 'sort_order', 'description', 'scope', 'scope_id', 'disabled', 'folder'];
+      const changed = fields.some(field => JSON.stringify(existing[field] ?? null) !== JSON.stringify(desired[field] ?? null));
+      if (changed || existing.folder_version !== ENGINE_VERSION) await spindle.regex_scripts.update(existing.id, desired, userId);
+    }
+  } catch (error) {
+    spindle.log.warn(`I Love TV! Suite: could not synchronize bundled display skin (${error?.message || error}).`);
+  }
+}
+
 function resolvedSuiteBlocks(config) {
-  const version = presetVersion(config.selectedVersion);
+  const version = presetVersion(config.selectedVersion, config.customVersions);
   let blocks = version.blocks.map(block => {
     const override = config.blockOverrides?.[block.id] || {};
-    return { ...block, ...override, id: block.id, variables: block.variables || [] };
+    return blockWithToggleDescription({ ...block, ...override, id: block.id, variables: block.variables || [] });
   });
   blocks.push(...config.customBlocks.map(block => ({ ...block, variables: block.variables || [] })));
   if (config.blockOrder.length) {
@@ -136,6 +346,7 @@ function suiteBlockSummaries(config) {
     id: block.id, name: block.name, enabled: block.enabled !== false, role: block.role,
     position: block.position, depth: Number(block.depth || 0), marker: block.marker || null,
     categoryMode: block.categoryMode || null, group: block.group || null,
+    isLocked: block.isLocked === true, toggleDescription: block.toggleDescription || '',
     kind: block.marker === 'category' ? 'category' : (block.marker ? 'marker' : 'block'),
     custom: config.customBlocks.some(item => item.id === block.id),
     edited: Boolean(config.blockOverrides?.[block.id])
@@ -143,7 +354,7 @@ function suiteBlockSummaries(config) {
 }
 
 function suiteVariables(config) {
-  const version = presetVersion(config.selectedVersion);
+  const version = presetVersion(config.selectedVersion, config.customVersions);
   return resolvedSuiteBlocks(config)
     .filter(block => Array.isArray(block.variables) && block.variables.length)
     .map(block => ({
@@ -159,7 +370,7 @@ function suiteVariables(config) {
 }
 
 function effectivePromptVariables(config) {
-  const defaults = presetVersion(config.selectedVersion).promptVariables || {};
+  const defaults = presetVersion(config.selectedVersion, config.customVersions).promptVariables || {};
   const merged = { ...defaults };
   for (const [blockId, values] of Object.entries(config.promptVariables || {})) {
     merged[blockId] = { ...(defaults[blockId] || {}), ...(values && typeof values === 'object' ? values : {}) };
@@ -173,7 +384,9 @@ function suiteState(config) {
     selectedVersion: config.selectedVersion,
     rpgMode: config.rpgMode,
     npcRepositoryEnabled: config.npcRepositoryEnabled,
-    versions: PRESET_VERSIONS.map(version => ({ id: version.id, label: version.label, description: version.description, blockCount: version.blocks.length })),
+    stripStaleScriptDirections: config.stripStaleScriptDirections,
+    bundledDisplaySkin: config.bundledDisplaySkin,
+    versions: [...config.customVersions, ...PRESET_VERSIONS].map(version => ({ id: version.id, label: version.label, description: version.description, blockCount: version.blocks.length, imported: version.imported === true })),
     blocks: suiteBlockSummaries(config),
     variables: suiteVariables(config),
     archives: config.archivedBlocks.map(item => ({ archiveId: item.archiveId, sourceBlockId: item.sourceBlockId, archivedAt: item.archivedAt, name: item.block?.name || 'Archived block' }))
@@ -704,6 +917,7 @@ spindle.onFrontendMessage(async (payload, userId) => {
   let suiteConfig = await getSuiteConfig(userId);
 
   if (payload.type === 'control_room:get_state') {
+    await syncBundledDisplaySkin(suiteConfig, userId);
     let connections = [];
     try {
       const profiles = normalizeConnections(await spindle.connections.list(userId));
@@ -721,16 +935,45 @@ spindle.onFrontendMessage(async (payload, userId) => {
   }
 
   if (payload.type === 'suite:select_version' && payload.versionId) {
-    suiteConfig.selectedVersion = presetVersion(payload.versionId).id;
+    suiteConfig.selectedVersion = presetVersion(payload.versionId, suiteConfig.customVersions).id;
     suiteConfig = await saveSuiteConfig(suiteConfig, userId);
     sendFrontend({ type: 'suite:config_saved', suite: suiteState(suiteConfig) }, userId);
+  }
+
+  if (payload.type === 'suite:import_version') {
+    try {
+      if (typeof payload.rawJson !== 'string' || !payload.rawJson.trim()) throw new Error('Paste a Lumiverse preset export before importing.');
+      if (payload.rawJson.length > 5_000_000) throw new Error('Preset export exceeds the 5 MB import limit.');
+      let source;
+      try {
+        source = JSON.parse(payload.rawJson);
+      } catch {
+        throw new Error('Preset export is not valid JSON.');
+      }
+      const imported = transformLumiversePreset(source, payload.versionName);
+      const baseId = imported.id;
+      let suffix = 2;
+      while ([...suiteConfig.customVersions, ...PRESET_VERSIONS].some(version => version.id === imported.id)) {
+        imported.id = `${baseId}-${suffix}`;
+        suffix += 1;
+      }
+      suiteConfig.customVersions = [...suiteConfig.customVersions, imported].slice(-MAX_IMPORTED_VERSIONS);
+      suiteConfig.selectedVersion = imported.id;
+      suiteConfig = await saveSuiteConfig(suiteConfig, userId);
+      sendFrontend({ type: 'suite:import_success', suite: suiteState(suiteConfig), version: { id: imported.id, label: imported.label } }, userId);
+    } catch (error) {
+      sendFrontend({ type: 'suite:import_error', error: error?.message || 'Preset import failed.' }, userId);
+    }
   }
 
   if (payload.type === 'suite:save_settings') {
     suiteConfig.enabled = payload.enabled !== false;
     suiteConfig.rpgMode = payload.rpgMode === true;
     suiteConfig.npcRepositoryEnabled = payload.npcRepositoryEnabled === true;
+    suiteConfig.stripStaleScriptDirections = payload.stripStaleScriptDirections !== false;
+    suiteConfig.bundledDisplaySkin = payload.bundledDisplaySkin !== false;
     suiteConfig = await saveSuiteConfig(suiteConfig, userId);
+    await syncBundledDisplaySkin(suiteConfig, userId);
     sendFrontend({ type: 'suite:config_saved', suite: suiteState(suiteConfig) }, userId);
   }
 
@@ -812,7 +1055,7 @@ spindle.onFrontendMessage(async (payload, userId) => {
   }
 
   if (payload.type === 'suite:save_block' && payload.blockId) {
-    const base = presetVersion(suiteConfig.selectedVersion).blocks.find(item => item.id === payload.blockId);
+    const base = presetVersion(suiteConfig.selectedVersion, suiteConfig.customVersions).blocks.find(item => item.id === payload.blockId);
     const editable = ['name', 'content', 'enabled', 'role', 'position', 'depth', 'marker', 'categoryMode', 'group'];
     const changes = Object.fromEntries(editable.filter(key => payload[key] !== undefined).map(key => [key, payload[key]]));
     if (base) {
@@ -937,12 +1180,12 @@ spindle.registerInterceptor(async (messages, context) => {
   const chatId = context?.chatId || 'default';
   const userId = context?.userId;
   const suiteConfig = await getSuiteConfig(userId);
-  let workingMessages = messages;
+  let workingMessages = suiteConfig.stripStaleScriptDirections ? stripStaleScriptDirections(messages) : messages;
   let suiteAssemblySucceeded = false;
   let suiteAssemblyError = '';
   if (suiteConfig.enabled && chatId !== 'default') {
     try {
-      const version = presetVersion(suiteConfig.selectedVersion);
+      const version = presetVersion(suiteConfig.selectedVersion, suiteConfig.customVersions);
       if (typeof spindle.assemble !== 'function') {
         throw new Error('Lumiverse prompt assembly API is unavailable. Update Lumiverse before using the bundled suite preset.');
       }
@@ -953,7 +1196,7 @@ spindle.registerInterceptor(async (messages, context) => {
         promptVariables: effectivePromptVariables(suiteConfig)
       }, userId);
       if (Array.isArray(assembled?.messages) && assembled.messages.length) {
-        workingMessages = assembled.messages;
+        workingMessages = suiteConfig.stripStaleScriptDirections ? stripStaleScriptDirections(assembled.messages) : assembled.messages;
         suiteAssemblySucceeded = true;
       } else {
         throw new Error('Lumiverse returned an empty assembled prompt.');
@@ -971,7 +1214,7 @@ spindle.registerInterceptor(async (messages, context) => {
     sendFrontend({ type: 'suite:assembly_error', chatId, error: suiteAssemblyError || 'Unknown prompt assembly error.' }, userId);
     return {
       messages: [failure, ...workingMessages],
-      breakdown: [{ messageIndex: 0, name: `I Love TV! Suite ${presetVersion(suiteConfig.selectedVersion).id} — Assembly Error` }]
+      breakdown: [{ messageIndex: 0, name: `I Love TV! Suite ${presetVersion(suiteConfig.selectedVersion, suiteConfig.customVersions).id} — Assembly Error` }]
     };
   }
   const modules = detectModules(workingMessages);
@@ -1083,7 +1326,7 @@ spindle.registerInterceptor(async (messages, context) => {
   const lines = [
     '<control_room_ledger priority="CRITICAL">',
     '[STUDIO CONTROL ROOM // LOCKED PRE-GENERATION RESULT]',
-    `Suite preset: ${presetVersion(suiteConfig.selectedVersion).label} (${suiteAssemblySucceeded ? 'assembled by extension' : 'host prompt fallback'})`,
+    `Suite preset: ${presetVersion(suiteConfig.selectedVersion, suiteConfig.customVersions).label} (${suiteAssemblySucceeded ? 'assembled by extension' : 'host prompt fallback'})`,
     `Generation type: ${context?.generationType || 'normal'}`,
     `Active preset modules: affinity=${modules.affinity}; continuity=${modules.continuity}; cyoa=${modules.cyoa}; pathfinding=${modules.pathfinding}`,
     `Background pass status: ${turnState.backgroundSucceeded ? 'SUCCESS' : `FALLBACK (${turnState.failureReason || 'unknown error'}) — the next regeneration/swipe will retry`}`,
@@ -1140,7 +1383,7 @@ spindle.registerInterceptor(async (messages, context) => {
   modified.splice(insertAt, 0, ...additions);
 
   sendFrontend({ type: 'control_room:state_data', chatId, ledger }, userId);
-  const sampler = presetVersion(suiteConfig.selectedVersion).samplerOverrides || {};
+  const sampler = presetVersion(suiteConfig.selectedVersion, suiteConfig.customVersions).samplerOverrides || {};
   const parameters = sampler.enabled === false ? undefined : Object.fromEntries([
     ['max_tokens', sampler.maxTokens],
     ['temperature', sampler.temperature],
