@@ -8,6 +8,7 @@ const CHOICE_TIMEOUT_MS = 120000;
 const MAX_LOG_ENTRIES = 30;
 const MAX_IMPORTED_BLOCK_CONTENT = 50000;
 const MAX_IMPORTED_VERSIONS = 20;
+const missingAntiSlopWarnings = new Set();
 const STALE_SCRIPT_DIRECTIONS_RE = /<script_directions[^>]*>[\s\S]*?<\/script_directions>/g;
 const BUNDLED_DISPLAY_SCRIPTS = [
   {
@@ -119,10 +120,13 @@ function defaultSuiteConfig() {
     customBlocks: [],
     archivedBlocks: [],
     customVersions: [],
+    devMode: false,
     rpgMode: false,
     npcRepositoryEnabled: false,
     stripStaleScriptDirections: true,
-    bundledDisplaySkin: true
+    bundledDisplaySkin: true,
+    slopPhrases: [],
+    slopPhrasesEnabled: true
   };
 }
 
@@ -233,10 +237,15 @@ function normalizeSuiteConfig(value) {
     customBlocks: Array.isArray(input.customBlocks) ? input.customBlocks.filter(block => block && typeof block === 'object' && block.id) : [],
     archivedBlocks: Array.isArray(input.archivedBlocks) ? input.archivedBlocks.filter(item => item && typeof item === 'object' && item.block).slice(-100) : [],
     customVersions,
+    devMode: input.devMode === true,
     rpgMode: input.rpgMode === true,
     npcRepositoryEnabled: input.npcRepositoryEnabled === true,
     stripStaleScriptDirections: input.stripStaleScriptDirections !== false,
-    bundledDisplaySkin: input.bundledDisplaySkin !== false
+    bundledDisplaySkin: input.bundledDisplaySkin !== false,
+    slopPhrases: Array.isArray(input.slopPhrases)
+      ? [...new Set(input.slopPhrases.map(item => String(item || '').replace(/\s+/g, ' ').trim()).filter(Boolean))]
+      : [],
+    slopPhrasesEnabled: input.slopPhrasesEnabled !== false
   };
 }
 
@@ -338,7 +347,55 @@ memory: one short new impression or event from this turn, or omit this line
 </suite_npc_repository>`
     });
   }
+  const antiSlopIndex = blocks.findIndex(block => String(block.content || '').includes('<anti_slop_reference>'));
+  if (antiSlopIndex < 0) {
+    if (!missingAntiSlopWarnings.has(config.selectedVersion)) {
+      missingAntiSlopWarnings.add(config.selectedVersion);
+      spindle.log.warn(`I Love TV! Suite: preset ${config.selectedVersion} has no <anti_slop_reference> anchor; Cinema Sins were skipped.`);
+    }
+  } else if (config.slopPhrasesEnabled && config.slopPhrases.length) {
+    const block = blocks[antiSlopIndex];
+    const phrases = config.slopPhrases.map(phrase => `- ${phrase}`).join('\n');
+    block.content = String(block.content).replace(
+      /<anti_slop_reference>([\s\S]*?)<\/anti_slop_reference>/i,
+      (_match, body) => `<anti_slop_reference>${body}${String(body).trim() ? '\n\n' : '\n'}## CINEMA SINS // OPERATOR BLACKLIST\n${phrases}\n</anti_slop_reference>`
+    );
+  }
   return blocks;
+}
+
+const BEGINNER_CATEGORY_RULES = [
+  { key: 'character_toggles', name: '━━ 🎭 Character Toggles', label: 'Character craft', mode: 'children' },
+  { key: 'audience_bonus', name: '━━ ♟️ USER TOGGLES', label: 'Audience bonuses', mode: 'children' },
+  { key: 'interactive_tv', name: '━━ 📊 Interactive TV', label: 'Interactive TV & audience warm-up', mode: 'children' },
+  { key: 'studio_skills', name: '━━ 🎨 Studio Skills & Frontend Rendering', label: 'Studio skills', mode: 'children' },
+  { key: 'late_night_tv', name: '━━ ❤️‍🔥 LATE NIGHT T.V.', label: 'Late Night TV', mode: 'children', prefix: '🔞' },
+  { key: 'scripting_process', name: '━━ 🧠 Chain of Thought (CoT)', label: 'Scripting process', mode: 'category' }
+];
+
+function beginnerToggleState(config) {
+  const blocks = resolvedSuiteBlocks(config);
+  const toggles = [];
+  for (const rule of BEGINNER_CATEGORY_RULES) {
+    const category = blocks.find(block => block.marker === 'category' && block.name === rule.name);
+    if (!category) continue;
+    if (rule.mode === 'category') {
+      if (!category.isLocked) toggles.push({
+        id: category.id, categoryKey: rule.key, categoryLabel: rule.label, label: rule.label,
+        description: category.toggleDescription || 'Enable the preset\'s private planning and script-directions pipeline as one unit.',
+        enabled: category.enabled !== false, kind: 'category'
+      });
+      continue;
+    }
+    blocks
+      .filter(block => block.group === category.id && !block.isLocked && (!rule.prefix || String(block.name || '').trim().startsWith(rule.prefix)))
+      .forEach(block => toggles.push({
+        id: block.id, categoryKey: rule.key, categoryLabel: rule.label, label: block.name,
+        description: block.toggleDescription || `Include ${String(block.name || 'this production feature').replace(/^[\s⋆⟢✮★ᗯ·]+/u, '').trim()} in the active broadcast preset.`,
+        enabled: block.enabled !== false, kind: 'block'
+      }));
+  }
+  return toggles;
 }
 
 function suiteBlockSummaries(config) {
@@ -382,12 +439,16 @@ function suiteState(config) {
   return {
     enabled: config.enabled,
     selectedVersion: config.selectedVersion,
+    devMode: config.devMode,
     rpgMode: config.rpgMode,
     npcRepositoryEnabled: config.npcRepositoryEnabled,
     stripStaleScriptDirections: config.stripStaleScriptDirections,
     bundledDisplaySkin: config.bundledDisplaySkin,
+    slopPhrases: config.slopPhrases,
+    slopPhrasesEnabled: config.slopPhrasesEnabled,
     versions: [...config.customVersions, ...PRESET_VERSIONS].map(version => ({ id: version.id, label: version.label, description: version.description, blockCount: version.blocks.length, imported: version.imported === true })),
     blocks: suiteBlockSummaries(config),
+    beginnerToggles: beginnerToggleState(config),
     variables: suiteVariables(config),
     archives: config.archivedBlocks.map(item => ({ archiveId: item.archiveId, sourceBlockId: item.sourceBlockId, archivedAt: item.archivedAt, name: item.block?.name || 'Archived block' }))
   };
@@ -968,12 +1029,20 @@ spindle.onFrontendMessage(async (payload, userId) => {
 
   if (payload.type === 'suite:save_settings') {
     suiteConfig.enabled = payload.enabled !== false;
+    suiteConfig.devMode = payload.devMode === true;
     suiteConfig.rpgMode = payload.rpgMode === true;
     suiteConfig.npcRepositoryEnabled = payload.npcRepositoryEnabled === true;
     suiteConfig.stripStaleScriptDirections = payload.stripStaleScriptDirections !== false;
     suiteConfig.bundledDisplaySkin = payload.bundledDisplaySkin !== false;
+    suiteConfig.slopPhrasesEnabled = payload.slopPhrasesEnabled !== false;
     suiteConfig = await saveSuiteConfig(suiteConfig, userId);
     await syncBundledDisplaySkin(suiteConfig, userId);
+    sendFrontend({ type: 'suite:config_saved', suite: suiteState(suiteConfig) }, userId);
+  }
+
+  if (payload.type === 'suite:save_slop_phrases' && Array.isArray(payload.phrases)) {
+    suiteConfig.slopPhrases = payload.phrases;
+    suiteConfig = await saveSuiteConfig(suiteConfig, userId);
     sendFrontend({ type: 'suite:config_saved', suite: suiteState(suiteConfig) }, userId);
   }
 
@@ -1051,11 +1120,15 @@ spindle.onFrontendMessage(async (payload, userId) => {
 
   if (payload.type === 'suite:get_block' && payload.blockId) {
     const block = resolvedSuiteBlocks(suiteConfig).find(item => item.id === payload.blockId);
-    if (block) sendFrontend({ type: 'suite:block_data', block }, userId);
+    if (block && (!block.isLocked || suiteConfig.devMode)) sendFrontend({ type: 'suite:block_data', block }, userId);
   }
 
   if (payload.type === 'suite:save_block' && payload.blockId) {
     const base = presetVersion(suiteConfig.selectedVersion, suiteConfig.customVersions).blocks.find(item => item.id === payload.blockId);
+    if (base?.isLocked) {
+      sendFrontend({ type: 'suite:locked_block_error', error: 'Locked host blocks are read-only.' }, userId);
+      return;
+    }
     const editable = ['name', 'content', 'enabled', 'role', 'position', 'depth', 'marker', 'categoryMode', 'group'];
     const changes = Object.fromEntries(editable.filter(key => payload[key] !== undefined).map(key => [key, payload[key]]));
     if (base) {
@@ -1072,6 +1145,11 @@ spindle.onFrontendMessage(async (payload, userId) => {
   }
 
   if (payload.type === 'suite:reset_block' && payload.blockId) {
+    const base = presetVersion(suiteConfig.selectedVersion, suiteConfig.customVersions).blocks.find(item => item.id === payload.blockId);
+    if (base?.isLocked) {
+      sendFrontend({ type: 'suite:locked_block_error', error: 'Locked host blocks are read-only.' }, userId);
+      return;
+    }
     delete suiteConfig.blockOverrides[payload.blockId];
     suiteConfig = await saveSuiteConfig(suiteConfig, userId);
     const block = resolvedSuiteBlocks(suiteConfig).find(item => item.id === payload.blockId);
@@ -1100,7 +1178,7 @@ spindle.onFrontendMessage(async (payload, userId) => {
 
   if (payload.type === 'suite:duplicate_block' && payload.blockId) {
     const source = resolvedSuiteBlocks(suiteConfig).find(item => item.id === payload.blockId);
-    if (source) {
+    if (source && !source.isLocked) {
       const copy = { ...source, id: uniqueBlockId('copy'), name: `${source.name} — Copy`, variables: Array.isArray(source.variables) ? source.variables.map(item => ({ ...item })) : [] };
       suiteConfig.customBlocks.push(copy);
       suiteConfig.blockOrder = insertAfter(suiteBlockSummaries(suiteConfig).map(item => item.id).filter(id => id !== copy.id), copy.id, source.id);
@@ -1119,7 +1197,7 @@ spindle.onFrontendMessage(async (payload, userId) => {
 
   if (payload.type === 'suite:archive_block' && payload.blockId) {
     const block = resolvedSuiteBlocks(suiteConfig).find(item => item.id === payload.blockId);
-    if (block) {
+    if (block && !block.isLocked) {
       suiteConfig.archivedBlocks.push({ archiveId: uniqueBlockId('archive'), sourceBlockId: block.id, archivedAt: new Date().toISOString(), block: { ...block } });
       suiteConfig = await saveSuiteConfig(suiteConfig, userId);
       sendFrontend({ type: 'suite:config_saved', suite: suiteState(suiteConfig) }, userId);
@@ -1141,6 +1219,7 @@ spindle.onFrontendMessage(async (payload, userId) => {
     try {
       const block = resolvedSuiteBlocks(suiteConfig).find(item => item.id === payload.blockId);
       if (!block) throw new Error('Prompt block not found.');
+      if (block.isLocked) throw new Error('Locked host blocks are read-only.');
       const connectionId = await resolveConnectionId(ledger.selectedConnection, undefined, userId);
       const content = await runPromptWorkshop({ connectionId, userId, blockName: block.name, content: payload.content ?? block.content, directions: payload.directions });
       sendFrontend({ type: 'suite:rewrite_ready', requestId: payload.requestId, blockId: block.id, content }, userId);
